@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Data (large files - download separately)
+data/raw/**/*
+data/interim/**/*
+data/processed/**/*
+!data/**/.gitkeep
+
+# Build outputs
+dist/**/*
+!dist/**/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local

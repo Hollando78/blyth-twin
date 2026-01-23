@@ -1,0 +1,14 @@
+{
+  "name": "blyth-web-twin",
+  "version": "0.1.0",
+  "description": "Web-first digital twin MVP for Blyth, Northumberland",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter viewer dev",
+    "build": "pnpm --filter viewer build",
+    "preview": "pnpm --filter viewer preview"
+  },
+  "devDependencies": {},
+  "packageManager": "pnpm@9.0.0"
+}

@@ -1,0 +1,53 @@
+# Blyth Digital Twin Configuration
+
+project:
+  name: "Blyth Digital Twin MVP"
+  version: "0.1.0"
+
+aoi:
+  # Centre point: Broadway Circle (NE24 2PG)
+  centre_lat: 55.12269
+  centre_lon: -1.516157
+  # Square AOI side length in metres
+  side_length_m: 5000
+  # Buffer for raster operations (metres)
+  buffer_m: 500
+  # Coordinate reference systems
+  crs_geographic: "EPSG:4326"
+  crs_projected: "EPSG:27700"  # British National Grid
+
+lidar:
+  # Environment Agency LiDAR resolution
+  resolution_m: 1.0
+  # Height datum
+  datum: "Ordnance Datum Newlyn"
+
+buildings:
+  # Default storey height for level-based estimation
+  storey_height_m: 3.0
+  # nDSM percentile for height extraction
+  ndsm_percentile: 90
+  # Height clamp range
+  min_height_m: 2.5
+  max_height_m: 80.0
+
+terrain:
+  # Mesh chunk size (metres)
+  chunk_size_m: 500
+  # LOD levels (optional)
+  lod_levels: [1, 2, 4]
+
+output:
+  # Mesh format
+  mesh_format: "glb"
+  # Compression (disable for local dev, enable for production with proper server config)
+  compress: false
+  # Output directory
+  dist_dir: "../dist/blyth_mvp_v1"
+
+paths:
+  raw_lidar_dtm: "../data/raw/lidar_dtm"
+  raw_lidar_dsm: "../data/raw/lidar_dsm"
+  raw_osm: "../data/raw/osm"
+  interim: "../data/interim"
+  processed: "../data/processed"
