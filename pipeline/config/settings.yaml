@@ -37,6 +37,33 @@ terrain:
   # LOD levels (optional)
   lod_levels: [1, 2, 4]
 
+roads:
+  # Road widths by type (metres)
+  width_primary_m: 8.0
+  width_secondary_m: 7.0
+  width_tertiary_m: 6.0
+  width_residential_m: 5.0
+  width_service_m: 4.0
+  width_footway_m: 2.0
+  width_cycleway_m: 2.5
+  width_default_m: 4.0
+  # Elevation offset above terrain to avoid z-fighting
+  elevation_offset_m: 1.0
+
+railways:
+  # Railway track width (standard gauge ~1.4m, with ballast ~3m)
+  width_m: 3.5
+  # Elevation offset above terrain
+  elevation_offset_m: 0.8
+
+water:
+  # Elevation offset above terrain for water bodies
+  elevation_offset_m: 0.3
+
+sea:
+  # Sea level elevation
+  elevation_m: 0.0
+
 output:
   # Mesh format
   mesh_format: "glb"

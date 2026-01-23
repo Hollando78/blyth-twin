@@ -163,6 +163,22 @@ def fetch_coastline(bbox: tuple) -> dict:
     return overpass_to_geojson(data, "coast")
 
 
+def fetch_railways(bbox: tuple) -> dict:
+    """Fetch railway lines."""
+    south, west, north, east = bbox
+    query = f"""
+    [out:json][timeout:180];
+    (
+      way["railway"~"rail|light_rail|tram|subway|narrow_gauge"]({south},{west},{north},{east});
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+    data = query_overpass(query)
+    return overpass_to_geojson(data, "railway")
+
+
 def save_geojson(data: dict, filepath: Path):
     """Save GeoJSON to file."""
     with open(filepath, "w") as f:
@@ -197,6 +213,11 @@ def main():
     print("\nFetching coastline...")
     coast = fetch_coastline(bbox)
     save_geojson(coast, OSM_DIR / "coast.geojson")
+    time.sleep(2)
+
+    print("\nFetching railways...")
+    railways = fetch_railways(bbox)
+    save_geojson(railways, OSM_DIR / "railways.geojson")
 
     print("\nDone!")
     print(f"\nSummary:")
@@ -204,6 +225,7 @@ def main():
     print(f"  Roads: {len(roads['features'])}")
     print(f"  Water: {len(water['features'])}")
     print(f"  Coastline: {len(coast['features'])}")
+    print(f"  Railways: {len(railways['features'])}")
 
 
 if __name__ == "__main__":

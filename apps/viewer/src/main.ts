@@ -3,14 +3,14 @@
  *
  * Three.js-based viewer for the Blyth digital twin.
  * Features:
- * - Fly controls (WASD + mouse)
+ * - OrbitControls for god's eye view navigation
  * - Chunk-based asset loading
- * - Progressive loading with distance-based prioritization
- * - Basic lighting and fog
+ * - Z-up coordinate system (geographic convention)
  */
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 // Types
 interface Manifest {
@@ -32,7 +32,7 @@ interface Manifest {
 
 interface Asset {
   id: string;
-  type: "terrain" | "buildings";
+  type: "terrain" | "buildings" | "roads" | "railways" | "water" | "sea";
   url: string;
   size_bytes: number;
   compressed: boolean;
@@ -55,20 +55,20 @@ const CONFIG = {
   manifestUrl: "/manifest.json",
   assetsBasePath: "/",
   camera: {
-    fov: 60,
+    fov: 45,
     near: 1,
-    far: 10000,
-    initialPosition: new THREE.Vector3(0, 300, 1000),
+    far: 15000,
+    initialPosition: new THREE.Vector3(0, 0, 4000),  // 4km above center (Z-up)
   },
   fog: {
     color: 0x87ceeb,
-    near: 1000,
-    far: 6000,
+    near: 3000,
+    far: 8000,
   },
   controls: {
-    moveSpeed: 150,
-    lookSpeed: 0.002,
-    sprintMultiplier: 3,
+    minDistance: 100,
+    maxDistance: 10000,
+    maxPolarAngle: Math.PI / 2.1,  // Slightly above horizon
   },
   materials: {
     terrain: {
@@ -79,6 +79,20 @@ const CONFIG = {
       color: 0x8b7355,
       flatShading: true,
     },
+    roads: {
+      color: 0x3a3a3a,
+    },
+    railways: {
+      color: 0x8b4513,
+    },
+    water: {
+      color: 0x4da6ff,
+      opacity: 0.85,
+    },
+    sea: {
+      color: 0x1a5c8c,
+      opacity: 0.9,
+    },
   },
 };
 
@@ -86,14 +100,10 @@ const CONFIG = {
 let camera: THREE.PerspectiveCamera;
 let scene: THREE.Scene;
 let renderer: THREE.WebGLRenderer;
+let controls: OrbitControls;
 let manifest: Manifest | null = null;
 const loadedAssets: Map<string, LoadedAsset> = new Map();
 const loader = new GLTFLoader();
-
-// Controls state
-const keys: Record<string, boolean> = {};
-let isPointerLocked = false;
-const euler = new THREE.Euler(0, 0, 0, "YXZ");
 
 // Loading state
 let totalAssets = 0;
@@ -126,7 +136,7 @@ async function init() {
     CONFIG.fog.far
   );
 
-  // Camera
+  // Camera (Z-up coordinate system)
   camera = new THREE.PerspectiveCamera(
     CONFIG.camera.fov,
     window.innerWidth / window.innerHeight,
@@ -134,12 +144,16 @@ async function init() {
     CONFIG.camera.far
   );
   camera.position.copy(CONFIG.camera.initialPosition);
+  camera.up.set(0, 0, 1);  // Z is up (geographic convention)
   camera.lookAt(0, 0, 0);
 
-  // Lighting
+  // Lighting (adjusted for Z-up)
   setupLighting();
 
-  // Controls
+  // AOI border
+  addAOIBorder();
+
+  // OrbitControls
   setupControls(canvas);
 
   // Window resize
@@ -164,90 +178,76 @@ async function init() {
 }
 
 /**
- * Set up scene lighting
+ * Set up scene lighting (Z-up coordinate system)
  */
 function setupLighting() {
   // Ambient light
-  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.5);
   scene.add(ambient);
 
-  // Directional light (sun)
+  // Directional light (sun) - positioned high in Z for Z-up system
   const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-  sun.position.set(1000, 2000, 1000);
+  sun.position.set(1000, -1000, 3000);  // High Z = above terrain
   sun.castShadow = true;
   sun.shadow.mapSize.width = 2048;
   sun.shadow.mapSize.height = 2048;
   sun.shadow.camera.near = 100;
-  sun.shadow.camera.far = 5000;
-  sun.shadow.camera.left = -2500;
-  sun.shadow.camera.right = 2500;
-  sun.shadow.camera.top = 2500;
-  sun.shadow.camera.bottom = -2500;
+  sun.shadow.camera.far = 6000;
+  sun.shadow.camera.left = -3000;
+  sun.shadow.camera.right = 3000;
+  sun.shadow.camera.top = 3000;
+  sun.shadow.camera.bottom = -3000;
   scene.add(sun);
 
-  // Hemisphere light for sky/ground color
+  // Hemisphere light (sky above in Z, ground below)
   const hemi = new THREE.HemisphereLight(0x87ceeb, 0x4a7c4e, 0.4);
+  hemi.position.set(0, 0, 1);  // Z-up
   scene.add(hemi);
 }
 
 /**
- * Set up fly controls
+ * Add red border around AOI (5km × 5km square)
  */
-function setupControls(canvas: HTMLCanvasElement) {
-  // Keyboard
-  document.addEventListener("keydown", (e) => {
-    keys[e.code] = true;
-  });
+function addAOIBorder() {
+  const halfSize = 2500;  // 5000m / 2
+  const z = 50;  // Slightly above ground level
 
-  document.addEventListener("keyup", (e) => {
-    keys[e.code] = false;
-  });
+  const points = [
+    new THREE.Vector3(-halfSize, -halfSize, z),
+    new THREE.Vector3(halfSize, -halfSize, z),
+    new THREE.Vector3(halfSize, halfSize, z),
+    new THREE.Vector3(-halfSize, halfSize, z),
+    new THREE.Vector3(-halfSize, -halfSize, z),  // Close the loop
+  ];
 
-  // Pointer lock for mouse look
-  canvas.addEventListener("click", () => {
-    canvas.requestPointerLock();
-  });
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
+  const border = new THREE.Line(geometry, material);
 
-  document.addEventListener("pointerlockchange", () => {
-    isPointerLocked = document.pointerLockElement === canvas;
-    const infoEl = document.getElementById("info");
-    if (infoEl) {
-      infoEl.style.opacity = isPointerLocked ? "0.3" : "1";
-    }
-  });
-
-  document.addEventListener("mousemove", (e) => {
-    if (!isPointerLocked) return;
-
-    euler.setFromQuaternion(camera.quaternion);
-    euler.y -= e.movementX * CONFIG.controls.lookSpeed;
-    euler.x -= e.movementY * CONFIG.controls.lookSpeed;
-    euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
-    camera.quaternion.setFromEuler(euler);
-  });
+  scene.add(border);
 }
 
 /**
- * Update camera position based on input
+ * Set up OrbitControls for god's eye view navigation
  */
-function updateControls(delta: number) {
-  const sprint = keys["ShiftLeft"] || keys["ShiftRight"] ? CONFIG.controls.sprintMultiplier : 1;
-  const moveSpeed = CONFIG.controls.moveSpeed * delta * sprint;
+function setupControls(canvas: HTMLCanvasElement) {
+  controls = new OrbitControls(camera, canvas);
+  controls.target.set(0, 0, 0);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.screenSpacePanning = true;
+  controls.minDistance = CONFIG.controls.minDistance;
+  controls.maxDistance = CONFIG.controls.maxDistance;
+  controls.maxPolarAngle = CONFIG.controls.maxPolarAngle;
 
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  forward.y = 0;
-  forward.normalize();
-
-  const right = new THREE.Vector3();
-  right.crossVectors(forward, new THREE.Vector3(0, 1, 0));
-
-  if (keys["KeyW"]) camera.position.addScaledVector(forward, moveSpeed);
-  if (keys["KeyS"]) camera.position.addScaledVector(forward, -moveSpeed);
-  if (keys["KeyA"]) camera.position.addScaledVector(right, -moveSpeed);
-  if (keys["KeyD"]) camera.position.addScaledVector(right, moveSpeed);
-  if (keys["Space"]) camera.position.y += moveSpeed;
-  if (keys["KeyQ"]) camera.position.y -= moveSpeed;
+  // Update info text
+  const infoEl = document.getElementById("info");
+  if (infoEl) {
+    infoEl.innerHTML = `
+      <strong>Blyth Digital Twin</strong><br>
+      Drag: Orbit | Right-drag: Pan | Scroll: Zoom
+    `;
+  }
 }
 
 /**
@@ -279,18 +279,22 @@ function updateProgress(progressEl: HTMLElement | null) {
 async function loadAllAssets(progressEl: HTMLElement | null) {
   if (!manifest) return;
 
-  // Sort assets: terrain first, then buildings
+  // Sort assets by layer order: terrain → roads → railways → water → sea → buildings
+  const layerOrder: Record<string, number> = {
+    terrain: 0,
+    roads: 1,
+    railways: 2,
+    water: 3,
+    sea: 4,
+    buildings: 5,
+  };
   const sortedAssets = [...manifest.assets].sort((a, b) => {
-    if (a.type === "terrain" && b.type === "buildings") return -1;
-    if (a.type === "buildings" && b.type === "terrain") return 1;
-    return 0;
+    return (layerOrder[a.type] ?? 99) - (layerOrder[b.type] ?? 99);
   });
 
-  // Load assets in batches
-  const batchSize = 10;
-  for (let i = 0; i < sortedAssets.length; i += batchSize) {
-    const batch = sortedAssets.slice(i, i + batchSize);
-    await Promise.all(batch.map((asset) => loadAsset(asset, progressEl)));
+  // Load assets sequentially to avoid memory issues
+  for (const asset of sortedAssets) {
+    await loadAsset(asset, progressEl);
   }
 }
 
@@ -298,14 +302,10 @@ async function loadAllAssets(progressEl: HTMLElement | null) {
  * Load a single asset
  */
 async function loadAsset(asset: Asset, progressEl: HTMLElement | null): Promise<void> {
-  // Handle gzipped assets - try uncompressed first, then gzipped
   let url = CONFIG.assetsBasePath + asset.url;
-
-  // If URL ends with .gz, also try without .gz
   const baseUrl = url.endsWith(".gz") ? url.slice(0, -3) : url;
 
   return new Promise((resolve) => {
-    // Try loading the asset
     loader.load(
       baseUrl,
       (gltf) => {
@@ -316,8 +316,6 @@ async function loadAsset(asset: Asset, progressEl: HTMLElement | null): Promise<
       },
       undefined,
       (error) => {
-        // If base URL failed and we have a .gz version, the server might handle decompression
-        // For now, just log the error
         console.warn(`Failed to load ${asset.id}:`, error);
         loadedCount++;
         updateProgress(progressEl);
@@ -331,30 +329,63 @@ async function loadAsset(asset: Asset, progressEl: HTMLElement | null): Promise<
  * Process a loaded asset and add to scene
  */
 function processLoadedAsset(asset: Asset, object: THREE.Object3D) {
-  // Apply materials based on type
-  const material = asset.type === "terrain"
-    ? new THREE.MeshLambertMaterial({
+  let material: THREE.Material;
+
+  switch (asset.type) {
+    case "terrain":
+      material = new THREE.MeshLambertMaterial({
         color: CONFIG.materials.terrain.color,
         flatShading: CONFIG.materials.terrain.flatShading,
-      })
-    : new THREE.MeshLambertMaterial({
+      });
+      break;
+    case "buildings":
+      material = new THREE.MeshLambertMaterial({
         color: CONFIG.materials.buildings.color,
         flatShading: CONFIG.materials.buildings.flatShading,
       });
+      break;
+    case "roads":
+      material = new THREE.MeshBasicMaterial({
+        color: CONFIG.materials.roads.color,
+        side: THREE.DoubleSide,
+      });
+      break;
+    case "railways":
+      material = new THREE.MeshBasicMaterial({
+        color: CONFIG.materials.railways.color,
+        side: THREE.DoubleSide,
+      });
+      break;
+    case "water":
+      material = new THREE.MeshBasicMaterial({
+        color: CONFIG.materials.water.color,
+        transparent: true,
+        opacity: CONFIG.materials.water.opacity,
+        side: THREE.DoubleSide,
+      });
+      break;
+    case "sea":
+      material = new THREE.MeshBasicMaterial({
+        color: CONFIG.materials.sea.color,
+        transparent: true,
+        opacity: CONFIG.materials.sea.opacity,
+        side: THREE.DoubleSide,
+      });
+      break;
+    default:
+      material = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  }
 
-  // Apply material to all meshes in the object
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.material = material;
       child.castShadow = asset.type === "buildings";
-      child.receiveShadow = true;
+      child.receiveShadow = asset.type === "terrain" || asset.type === "roads";
     }
   });
 
-  // Add to scene
   scene.add(object);
 
-  // Track loaded asset
   loadedAssets.set(asset.id, {
     asset,
     mesh: object,
@@ -378,20 +409,17 @@ function updateHUD() {
   const posEl = document.getElementById("position");
   if (posEl) {
     const pos = camera.position;
-    posEl.textContent = `Position: ${pos.x.toFixed(0)}, ${pos.y.toFixed(0)}, ${pos.z.toFixed(0)}`;
+    posEl.textContent = `Alt: ${pos.z.toFixed(0)}m | X: ${pos.x.toFixed(0)} Y: ${pos.y.toFixed(0)}`;
   }
 }
 
 /**
  * Animation loop
  */
-const clock = new THREE.Clock();
-
 function animate() {
   requestAnimationFrame(animate);
 
-  const delta = clock.getDelta();
-  updateControls(delta);
+  controls.update();
   updateHUD();
 
   renderer.render(scene, camera);

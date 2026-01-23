@@ -159,6 +159,34 @@ def main():
         building_assets = pack_assets(buildings_dir, assets_dir, "buildings", compress, chunk_size)
         all_assets.extend(building_assets)
 
+    # Pack roads
+    roads_dir = PROCESSED_DIR / "roads"
+    if roads_dir.exists():
+        print("\nPacking road assets...")
+        road_assets = pack_assets(roads_dir, assets_dir, "roads", compress, chunk_size)
+        all_assets.extend(road_assets)
+
+    # Pack railways
+    railways_dir = PROCESSED_DIR / "railways"
+    if railways_dir.exists():
+        print("\nPacking railway assets...")
+        railway_assets = pack_assets(railways_dir, assets_dir, "railways", compress, chunk_size)
+        all_assets.extend(railway_assets)
+
+    # Pack water
+    water_dir = PROCESSED_DIR / "water"
+    if water_dir.exists():
+        print("\nPacking water assets...")
+        water_assets = pack_assets(water_dir, assets_dir, "water", compress, chunk_size)
+        all_assets.extend(water_assets)
+
+    # Pack sea
+    sea_dir = PROCESSED_DIR / "sea"
+    if sea_dir.exists():
+        print("\nPacking sea assets...")
+        sea_assets = pack_assets(sea_dir, assets_dir, "sea", compress, chunk_size)
+        all_assets.extend(sea_assets)
+
     # Generate manifest
     print("\nGenerating manifest...")
     manifest = generate_manifest(all_assets, aoi_info, settings)

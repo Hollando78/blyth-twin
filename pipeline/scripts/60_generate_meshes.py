@@ -285,6 +285,459 @@ def generate_building_meshes(buildings_path: Path, dtm_path: Path,
     return meshes_by_chunk
 
 
+def get_road_width(highway_type: str, settings: dict) -> float:
+    """Get road width based on highway type."""
+    road_settings = settings.get("roads", {})
+    width_map = {
+        "primary": road_settings.get("width_primary_m", 8.0),
+        "primary_link": road_settings.get("width_primary_m", 8.0),
+        "secondary": road_settings.get("width_secondary_m", 7.0),
+        "secondary_link": road_settings.get("width_secondary_m", 7.0),
+        "tertiary": road_settings.get("width_tertiary_m", 6.0),
+        "tertiary_link": road_settings.get("width_tertiary_m", 6.0),
+        "residential": road_settings.get("width_residential_m", 5.0),
+        "unclassified": road_settings.get("width_residential_m", 5.0),
+        "service": road_settings.get("width_service_m", 4.0),
+        "footway": road_settings.get("width_footway_m", 2.0),
+        "path": road_settings.get("width_footway_m", 2.0),
+        "cycleway": road_settings.get("width_cycleway_m", 2.5),
+        "track": road_settings.get("width_service_m", 4.0),
+        "pedestrian": road_settings.get("width_footway_m", 2.0),
+        "steps": road_settings.get("width_footway_m", 1.5),
+        "trunk": road_settings.get("width_primary_m", 8.0),
+        "trunk_link": road_settings.get("width_primary_m", 8.0),
+    }
+    return width_map.get(highway_type, road_settings.get("width_default_m", 4.0))
+
+
+def create_ribbon_mesh(coords: list[tuple], elevations: list[float],
+                       width: float, z_offset: float = 0.1) -> trimesh.Trimesh | None:
+    """
+    Create a ribbon mesh along a path.
+
+    Args:
+        coords: List of (x, y) local coordinates
+        elevations: Ground elevation at each point
+        width: Road width in metres
+        z_offset: Height above ground to avoid z-fighting
+    """
+    if len(coords) < 2:
+        return None
+
+    vertices = []
+    faces = []
+    half_width = width / 2
+
+    for i in range(len(coords) - 1):
+        x1, y1 = coords[i]
+        x2, y2 = coords[i + 1]
+        z1 = elevations[i] + z_offset
+        z2 = elevations[i + 1] + z_offset
+
+        # Direction vector
+        dx = x2 - x1
+        dy = y2 - y1
+        length = np.sqrt(dx**2 + dy**2)
+
+        if length < 0.01:
+            continue
+
+        # Perpendicular vector (rotated 90°)
+        px = -dy / length * half_width
+        py = dx / length * half_width
+
+        # 4 vertices per segment (quad)
+        v_idx = len(vertices)
+        vertices.extend([
+            [x1 - px, y1 - py, z1],
+            [x1 + px, y1 + py, z1],
+            [x2 + px, y2 + py, z2],
+            [x2 - px, y2 - py, z2],
+        ])
+
+        # Two triangles per quad
+        faces.append([v_idx, v_idx + 1, v_idx + 2])
+        faces.append([v_idx, v_idx + 2, v_idx + 3])
+
+    if len(vertices) == 0:
+        return None
+
+    return trimesh.Trimesh(vertices=np.array(vertices), faces=np.array(faces))
+
+
+def generate_road_meshes(roads_path: Path, dtm_path: Path, origin: tuple[float, float],
+                         chunk_size: float, settings: dict) -> dict:
+    """Generate road ribbon meshes, organized by chunk."""
+    print(f"Loading roads from {roads_path}...")
+    with open(roads_path) as f:
+        roads = json.load(f)
+
+    print(f"Opening DTM for ground elevation...")
+    dtm_src = rasterio.open(dtm_path)
+
+    print(f"Processing {len(roads['features'])} roads...")
+
+    meshes_by_chunk = {}
+    success = 0
+    failed = 0
+    origin_x, origin_y = origin
+    z_offset = settings.get("roads", {}).get("elevation_offset_m", 0.1)
+
+    for i, feature in enumerate(roads["features"]):
+        geom = feature.get("geometry")
+        props = feature.get("properties", {})
+        highway_type = props.get("highway", "unclassified")
+
+        if geom is None or geom["type"] != "LineString":
+            failed += 1
+            continue
+
+        coords_wgs84 = geom["coordinates"]
+        if len(coords_wgs84) < 2:
+            failed += 1
+            continue
+
+        # Transform to local coordinates and get elevations
+        local_coords = []
+        elevations = []
+
+        for lon, lat in coords_wgs84:
+            x, y = WGS84_TO_BNG.transform(lon, lat)
+            local_x = x - origin_x
+            local_y = y - origin_y
+            local_coords.append((local_x, local_y))
+            elevations.append(get_ground_elevation(x, y, dtm_src))
+
+        # Get road width
+        width = get_road_width(highway_type, settings)
+
+        # Create mesh
+        mesh = create_ribbon_mesh(local_coords, elevations, width, z_offset)
+
+        if mesh is not None and len(mesh.vertices) > 0:
+            # Determine chunk based on road midpoint
+            mid_idx = len(local_coords) // 2
+            mid_x, mid_y = local_coords[mid_idx]
+            chunk_x = int(mid_x // chunk_size)
+            chunk_y = int(mid_y // chunk_size)
+            chunk_key = f"{chunk_x}_{chunk_y}"
+
+            if chunk_key not in meshes_by_chunk:
+                meshes_by_chunk[chunk_key] = []
+            meshes_by_chunk[chunk_key].append(mesh)
+            success += 1
+        else:
+            failed += 1
+
+        if (i + 1) % 1000 == 0:
+            print(f"  Processed {i + 1}/{len(roads['features'])} roads")
+
+    dtm_src.close()
+    print(f"  Success: {success}, Failed: {failed}")
+    return meshes_by_chunk
+
+
+def generate_railway_meshes(railways_path: Path, dtm_path: Path, origin: tuple[float, float],
+                            chunk_size: float, settings: dict) -> dict:
+    """Generate railway ribbon meshes, organized by chunk."""
+    print(f"Loading railways from {railways_path}...")
+    with open(railways_path) as f:
+        railways = json.load(f)
+
+    print(f"Opening DTM for ground elevation...")
+    dtm_src = rasterio.open(dtm_path)
+
+    print(f"Processing {len(railways['features'])} railways...")
+
+    meshes_by_chunk = {}
+    success = 0
+    failed = 0
+    origin_x, origin_y = origin
+    railway_settings = settings.get("railways", {})
+    width = railway_settings.get("width_m", 3.5)
+    z_offset = railway_settings.get("elevation_offset_m", 0.8)
+
+    for i, feature in enumerate(railways["features"]):
+        geom = feature.get("geometry")
+
+        if geom is None or geom["type"] != "LineString":
+            failed += 1
+            continue
+
+        coords_wgs84 = geom["coordinates"]
+        if len(coords_wgs84) < 2:
+            failed += 1
+            continue
+
+        # Transform to local coordinates and get elevations
+        local_coords = []
+        elevations = []
+
+        for lon, lat in coords_wgs84:
+            x, y = WGS84_TO_BNG.transform(lon, lat)
+            local_x = x - origin_x
+            local_y = y - origin_y
+            local_coords.append((local_x, local_y))
+            elevations.append(get_ground_elevation(x, y, dtm_src))
+
+        # Create mesh
+        mesh = create_ribbon_mesh(local_coords, elevations, width, z_offset)
+
+        if mesh is not None and len(mesh.vertices) > 0:
+            # Determine chunk based on midpoint
+            mid_idx = len(local_coords) // 2
+            mid_x, mid_y = local_coords[mid_idx]
+            chunk_x = int(mid_x // chunk_size)
+            chunk_y = int(mid_y // chunk_size)
+            chunk_key = f"{chunk_x}_{chunk_y}"
+
+            if chunk_key not in meshes_by_chunk:
+                meshes_by_chunk[chunk_key] = []
+            meshes_by_chunk[chunk_key].append(mesh)
+            success += 1
+        else:
+            failed += 1
+
+    dtm_src.close()
+    print(f"  Success: {success}, Failed: {failed}")
+    return meshes_by_chunk
+
+
+def create_polygon_mesh(coords: list[tuple], z: float = 0.0) -> trimesh.Trimesh | None:
+    """Create a flat polygon mesh from coordinates."""
+    from shapely.geometry import Polygon as ShapelyPolygon
+
+    if len(coords) < 3:
+        return None
+
+    try:
+        poly = ShapelyPolygon(coords)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        if poly.is_empty or poly.area < 1:
+            return None
+
+        # Create flat mesh at z height
+        mesh = trimesh.creation.extrude_polygon(poly, 0.01)  # Very thin extrusion
+        mesh.vertices[:, 2] = z  # Flatten to z height
+
+        return mesh
+    except Exception:
+        return None
+
+
+def generate_water_meshes(water_path: Path, dtm_path: Path, origin: tuple[float, float],
+                          chunk_size: float, aoi_bounds: tuple, settings: dict) -> dict:
+    """Generate water body meshes, organized by chunk and clipped to AOI."""
+    from shapely.geometry import Polygon as ShapelyPolygon, box
+    from shapely.ops import unary_union
+
+    print(f"Loading water from {water_path}...")
+    with open(water_path) as f:
+        water = json.load(f)
+
+    print(f"Opening DTM for ground elevation...")
+    dtm_src = rasterio.open(dtm_path)
+
+    # Create AOI clip box in local coordinates
+    min_x, min_y, max_x, max_y = aoi_bounds
+    aoi_box = box(min_x, min_y, max_x, max_y)
+
+    print(f"Processing {len(water['features'])} water features (clipping to AOI)...")
+
+    meshes_by_chunk = {}
+    success = 0
+    failed = 0
+    clipped = 0
+    origin_x, origin_y = origin
+    z_offset = settings.get("water", {}).get("elevation_offset_m", 0.3)
+
+    for i, feature in enumerate(water["features"]):
+        geom = feature.get("geometry")
+
+        if geom is None:
+            failed += 1
+            continue
+
+        # Handle both Polygon and MultiPolygon
+        if geom["type"] == "Polygon":
+            polygons = [geom["coordinates"]]
+        elif geom["type"] == "MultiPolygon":
+            polygons = geom["coordinates"]
+        else:
+            failed += 1
+            continue
+
+        for poly_coords in polygons:
+            coords_wgs84 = poly_coords[0]  # Exterior ring
+
+            # Transform to local coordinates
+            local_coords = []
+            bng_coords = []
+            for lon, lat in coords_wgs84:
+                x, y = WGS84_TO_BNG.transform(lon, lat)
+                local_coords.append((x - origin_x, y - origin_y))
+                bng_coords.append((x, y))
+
+            # Create shapely polygon and clip to AOI
+            try:
+                water_poly = ShapelyPolygon(local_coords)
+                if not water_poly.is_valid:
+                    water_poly = water_poly.buffer(0)
+
+                clipped_poly = water_poly.intersection(aoi_box)
+
+                if clipped_poly.is_empty or clipped_poly.area < 1:
+                    failed += 1
+                    continue
+
+                # Track if we clipped
+                if clipped_poly.area < water_poly.area * 0.99:
+                    clipped += 1
+
+                # Get coordinates from clipped polygon
+                if clipped_poly.geom_type == 'Polygon':
+                    local_coords = list(clipped_poly.exterior.coords)
+                elif clipped_poly.geom_type == 'MultiPolygon':
+                    # Take largest polygon
+                    largest = max(clipped_poly.geoms, key=lambda p: p.area)
+                    local_coords = list(largest.exterior.coords)
+                else:
+                    failed += 1
+                    continue
+            except Exception:
+                failed += 1
+                continue
+
+            # Get ground elevation at polygon centroid
+            cx = sum(c[0] for c in bng_coords) / len(bng_coords)
+            cy = sum(c[1] for c in bng_coords) / len(bng_coords)
+            ground_z = get_ground_elevation(cx, cy, dtm_src)
+            water_z = ground_z + z_offset
+
+            # Create mesh at terrain-relative height
+            mesh = create_polygon_mesh(local_coords, water_z)
+
+            if mesh is not None and len(mesh.vertices) > 0:
+                # Determine chunk based on centroid
+                xs = [c[0] for c in local_coords]
+                ys = [c[1] for c in local_coords]
+                center_x = sum(xs) / len(xs)
+                center_y = sum(ys) / len(ys)
+                chunk_x = int(center_x // chunk_size)
+                chunk_y = int(center_y // chunk_size)
+                chunk_key = f"{chunk_x}_{chunk_y}"
+
+                if chunk_key not in meshes_by_chunk:
+                    meshes_by_chunk[chunk_key] = []
+                meshes_by_chunk[chunk_key].append(mesh)
+                success += 1
+            else:
+                failed += 1
+
+    dtm_src.close()
+    print(f"  Success: {success}, Failed: {failed}, Clipped: {clipped}")
+    return meshes_by_chunk
+
+
+def generate_sea_mesh(coast_path: Path, origin: tuple[float, float],
+                      aoi_bounds: tuple, settings: dict) -> dict:
+    """
+    Generate sea mesh east of coastline, properly clipped to AOI.
+
+    Args:
+        coast_path: Path to coastline GeoJSON
+        origin: Local origin (x, y)
+        aoi_bounds: (min_x, min_y, max_x, max_y) in local coordinates
+        settings: Configuration settings
+    """
+    from shapely.geometry import LineString, Polygon as ShapelyPolygon, box
+    from shapely.ops import linemerge
+
+    print(f"Loading coastline from {coast_path}...")
+    with open(coast_path) as f:
+        coast = json.load(f)
+
+    origin_x, origin_y = origin
+    sea_z = settings.get("sea", {}).get("elevation_m", 0.0)
+    min_x, min_y, max_x, max_y = aoi_bounds
+
+    # 1. Filter: only mainland coastline (exclude islands/islets)
+    coastline_segments = []
+    skipped_islands = 0
+    for feature in coast["features"]:
+        props = feature.get("properties", {})
+        # Skip islands and islets
+        if props.get("place") in ["island", "islet"]:
+            skipped_islands += 1
+            continue
+
+        geom = feature.get("geometry")
+        if geom is None or geom["type"] != "LineString":
+            continue
+
+        coords = geom["coordinates"]
+        local_coords = []
+        for lon, lat in coords:
+            x, y = WGS84_TO_BNG.transform(lon, lat)
+            local_coords.append((x - origin_x, y - origin_y))
+
+        if len(local_coords) >= 2:
+            coastline_segments.append(LineString(local_coords))
+
+    if not coastline_segments:
+        print("  No coastline segments found")
+        return {}
+
+    print(f"  Found {len(coastline_segments)} coastline segments (skipped {skipped_islands} islands)")
+
+    # 2. Merge coastline segments to preserve connectivity
+    merged = linemerge(coastline_segments)
+    if merged.geom_type == 'MultiLineString':
+        # Take longest segment if merge didn't fully connect
+        merged = max(merged.geoms, key=lambda g: g.length)
+        print(f"  Warning: Coastline has gaps, using longest segment")
+
+    coast_coords = list(merged.coords)
+    print(f"  Merged coastline: {len(coast_coords)} points")
+
+    # 3. Build sea polygon: coastline + eastern boundary + close
+    sea_coords = list(coast_coords)
+    # Add eastern corners (extend to AOI east boundary)
+    sea_coords.append((max_x, coast_coords[-1][1]))
+    sea_coords.append((max_x, coast_coords[0][1]))
+    # Close polygon
+    sea_coords.append(coast_coords[0])
+
+    try:
+        sea_poly = ShapelyPolygon(sea_coords)
+        if not sea_poly.is_valid:
+            sea_poly = sea_poly.buffer(0)
+
+        # 4. Clip to AOI
+        aoi_box = box(min_x, min_y, max_x, max_y)
+        clipped = sea_poly.intersection(aoi_box)
+
+        if clipped.is_empty or clipped.area < 1:
+            print("  Sea polygon empty after clipping")
+            return {}
+
+        # Handle MultiPolygon (take largest)
+        if clipped.geom_type == 'MultiPolygon':
+            clipped = max(clipped.geoms, key=lambda p: p.area)
+
+        # 5. Create mesh using trimesh's proper triangulation
+        mesh = trimesh.creation.extrude_polygon(clipped, 0.01)
+        mesh.vertices[:, 2] = sea_z  # Flatten to sea level
+
+        print(f"  Created sea mesh: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+        return {"0_0": mesh}
+
+    except Exception as e:
+        print(f"  Error creating sea mesh: {e}")
+        return {}
+
+
 def save_meshes(meshes_by_chunk: dict, output_dir: Path, prefix: str) -> dict:
     """Save chunked meshes as GLB files. Returns stats."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -323,13 +776,27 @@ def main():
     origin = load_aoi_centre()
     print(f"Origin (BNG): {origin}")
 
+    # Input paths
     dtm_path = INTERIM_DIR / "dtm_clip.tif"
     buildings_path = PROCESSED_DIR / "buildings_height.geojson"
+    roads_path = DATA_DIR / "raw" / "osm" / "roads.geojson"
+    railways_path = DATA_DIR / "raw" / "osm" / "railways.geojson"
+    water_path = DATA_DIR / "raw" / "osm" / "water.geojson"
+    coast_path = DATA_DIR / "raw" / "osm" / "coast.geojson"
 
+    # Output directories
     terrain_dir = PROCESSED_DIR / "terrain"
     buildings_dir = PROCESSED_DIR / "buildings"
+    roads_dir = PROCESSED_DIR / "roads"
+    railways_dir = PROCESSED_DIR / "railways"
+    water_dir = PROCESSED_DIR / "water"
+    sea_dir = PROCESSED_DIR / "sea"
 
-    total_stats = {"terrain": {}, "buildings": {}}
+    total_stats = {"terrain": {}, "buildings": {}, "roads": {}, "railways": {}, "water": {}, "sea": {}}
+
+    # Calculate AOI bounds for sea mesh
+    aoi_side = settings["aoi"]["side_length_m"]
+    aoi_bounds = (-aoi_side / 2, -aoi_side / 2, aoi_side / 2, aoi_side / 2)
 
     # Generate terrain meshes
     if dtm_path.exists():
@@ -352,6 +819,50 @@ def main():
         total_stats["buildings"] = stats
     else:
         print(f"Buildings not found: {buildings_path}")
+
+    # Generate road meshes
+    if roads_path.exists() and dtm_path.exists():
+        print("\n" + "="*50)
+        print("ROAD MESHES")
+        print("="*50)
+        road_chunks = generate_road_meshes(roads_path, dtm_path, origin, chunk_size, settings)
+        stats = save_meshes(road_chunks, roads_dir, "roads")
+        total_stats["roads"] = stats
+    else:
+        print(f"Roads or DTM not found")
+
+    # Generate railway meshes
+    if railways_path.exists() and dtm_path.exists():
+        print("\n" + "="*50)
+        print("RAILWAY MESHES")
+        print("="*50)
+        railway_chunks = generate_railway_meshes(railways_path, dtm_path, origin, chunk_size, settings)
+        stats = save_meshes(railway_chunks, railways_dir, "railways")
+        total_stats["railways"] = stats
+    else:
+        print(f"Railways not found: {railways_path}")
+
+    # Generate water meshes
+    if water_path.exists() and dtm_path.exists():
+        print("\n" + "="*50)
+        print("WATER MESHES")
+        print("="*50)
+        water_chunks = generate_water_meshes(water_path, dtm_path, origin, chunk_size, aoi_bounds, settings)
+        stats = save_meshes(water_chunks, water_dir, "water")
+        total_stats["water"] = stats
+    else:
+        print(f"Water or DTM not found")
+
+    # Generate sea mesh
+    if coast_path.exists():
+        print("\n" + "="*50)
+        print("SEA MESH")
+        print("="*50)
+        sea_chunks = generate_sea_mesh(coast_path, origin, aoi_bounds, settings)
+        stats = save_meshes(sea_chunks, sea_dir, "sea")
+        total_stats["sea"] = stats
+    else:
+        print(f"Coastline not found: {coast_path}")
 
     # Summary
     print("\n" + "="*50)
