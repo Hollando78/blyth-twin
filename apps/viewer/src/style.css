@@ -114,3 +114,70 @@ html, body {
 #position {
   color: #87ceeb;
 }
+
+/* Building Info Panel */
+#building-info {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 20px;
+  border-radius: 8px;
+  min-width: 220px;
+  max-width: 300px;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+#building-info.hidden {
+  transform: translateX(350px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#close-info {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+}
+
+#close-info:hover {
+  color: white;
+}
+
+#building-name {
+  font-size: 18px;
+  margin: 0 0 15px 0;
+  padding-right: 20px;
+  color: #87ceeb;
+  font-weight: 600;
+}
+
+#building-props {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+#building-props dt {
+  color: #999;
+  font-weight: 500;
+}
+
+#building-props dd {
+  margin: 0;
+  color: #eee;
+}

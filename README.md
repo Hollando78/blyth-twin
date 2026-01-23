@@ -97,6 +97,7 @@ pnpm dev
 | `40_compute_ndsm.py` | Compute normalized DSM |
 | `50_building_heights.py` | Derive building heights |
 | `60_generate_meshes.py` | Generate 3D meshes |
+| `65_generate_footprints.py` | Generate selectable building footprints |
 | `70_pack_assets.py` | Package assets for web |
 | `90_validate.py` | Generate validation report |
 
@@ -116,10 +117,19 @@ Heights are derived in this priority order:
 
 ## Viewer Controls
 
-- **WASD** - Move
-- **Mouse** - Look around (click to enable)
-- **Space** - Move up
-- **Shift** - Move down
+- **Drag** - Orbit camera
+- **Right-drag** - Pan
+- **Scroll** - Zoom in/out
+- **Click building** - View building info
+
+## Building Selection
+
+Click on any building to view its metadata including:
+- Name and type
+- Address and postcode
+- Building height (from LiDAR)
+
+The footprints layer provides per-building identity via face-to-building mapping, enabling efficient raycasting across 17k+ buildings.
 
 ## License
 

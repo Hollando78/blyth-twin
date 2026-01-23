@@ -24,6 +24,11 @@ from datetime import datetime
 
 import yaml
 
+# Additional files to copy (not GLB assets)
+EXTRA_FILES = [
+    ("footprints_metadata.json", "footprints_metadata.json"),
+]
+
 # Paths
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
@@ -186,6 +191,22 @@ def main():
         print("\nPacking sea assets...")
         sea_assets = pack_assets(sea_dir, assets_dir, "sea", compress, chunk_size)
         all_assets.extend(sea_assets)
+
+    # Pack footprints
+    footprints_dir = PROCESSED_DIR / "footprints"
+    if footprints_dir.exists():
+        print("\nPacking footprint assets...")
+        footprint_assets = pack_assets(footprints_dir, assets_dir, "footprints", compress, chunk_size)
+        all_assets.extend(footprint_assets)
+
+    # Copy extra files (metadata, etc.)
+    print("\nCopying extra files...")
+    for src_name, dst_name in EXTRA_FILES:
+        src_path = PROCESSED_DIR / src_name
+        if src_path.exists():
+            dst_path = DIST_DIR / dst_name
+            shutil.copy2(src_path, dst_path)
+            print(f"  Copied: {dst_name}")
 
     # Generate manifest
     print("\nGenerating manifest...")
