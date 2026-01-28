@@ -450,9 +450,98 @@ def extrude_building(geometry_wgs84: dict, height: float, ground_z: float,
     return extrude_building_with_uvs(geometry_wgs84, height, ground_z, origin)
 
 
+def get_custom_mesh_osm_ids() -> set[int]:
+    """Get set of OSM IDs that have custom meshes in the database."""
+    import os
+    try:
+        import psycopg2
+        password = os.environ.get("PGPASSWORD", "blyth123")
+        conn = psycopg2.connect(
+            host="localhost",
+            database="blyth_twin",
+            user="postgres",
+            password=password
+        )
+        cur = conn.cursor()
+
+        # Check if table exists
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'building_meshes'
+            )
+        """)
+        if not cur.fetchone()[0]:
+            cur.close()
+            conn.close()
+            return set()
+
+        cur.execute("SELECT osm_id FROM building_meshes")
+        ids = {row[0] for row in cur.fetchall()}
+        cur.close()
+        conn.close()
+        return ids
+    except Exception as e:
+        print(f"  Warning: Could not check for custom meshes: {e}")
+        return set()
+
+
+def load_custom_mesh(osm_id: int, origin: tuple[float, float]) -> trimesh.Trimesh | None:
+    """Load a custom mesh from the database and translate to local coordinates."""
+    import os
+    try:
+        import psycopg2
+        import io
+        password = os.environ.get("PGPASSWORD", "blyth123")
+        conn = psycopg2.connect(
+            host="localhost",
+            database="blyth_twin",
+            user="postgres",
+            password=password
+        )
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT glb_data, glb_url
+            FROM building_meshes
+            WHERE osm_id = %s
+        """, (osm_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row or (row[0] is None and row[1] is None):
+            return None
+
+        glb_data = row[0]
+        glb_url = row[1]
+
+        if glb_data:
+            mesh = trimesh.load(io.BytesIO(bytes(glb_data)), file_type='glb')
+        elif glb_url:
+            # Load from URL (basic support)
+            import urllib.request
+            with urllib.request.urlopen(glb_url) as response:
+                mesh = trimesh.load(io.BytesIO(response.read()), file_type='glb')
+        else:
+            return None
+
+        # Note: Custom meshes should already be in local coordinates
+        # If not, transformation would need to be applied here
+        return mesh
+
+    except Exception as e:
+        print(f"    Warning: Could not load custom mesh for {osm_id}: {e}")
+        return None
+
+
 def generate_building_meshes(buildings_path: Path, dtm_path: Path,
                             origin: tuple[float, float], chunk_size: float) -> dict:
-    """Generate building meshes, organized by chunk."""
+    """Generate building meshes, organized by chunk.
+
+    Buildings with custom meshes in the database are loaded instead of
+    being procedurally generated.
+    """
     print(f"Loading buildings from {buildings_path}...")
     with open(buildings_path) as f:
         buildings = json.load(f)
@@ -460,41 +549,59 @@ def generate_building_meshes(buildings_path: Path, dtm_path: Path,
     print(f"Opening DTM for ground elevation...")
     dtm_src = rasterio.open(dtm_path)
 
+    # Check for custom meshes
+    custom_mesh_ids = get_custom_mesh_osm_ids()
+    if custom_mesh_ids:
+        print(f"  Found {len(custom_mesh_ids)} buildings with custom meshes")
+
     print(f"Processing {len(buildings['features'])} buildings...")
 
     meshes_by_chunk = {}  # chunk_key -> list of (mesh, osm_id)
     success = 0
     failed = 0
+    custom_loaded = 0
     origin_x, origin_y = origin
 
     for i, feature in enumerate(buildings["features"]):
         geom = feature.get("geometry")
         height = feature["properties"].get("height", 6.0)
+        props = feature.get("properties", {})
+        osm_id = props.get("osm_id", 0)
 
         if geom is None or geom['type'] != 'Polygon':
             failed += 1
             continue
 
-        # Get building centroid in BNG for ground elevation
+        # Get building centroid in BNG for ground elevation and chunk assignment
         coords_wgs84 = geom['coordinates'][0]
         center_lon = sum(c[0] for c in coords_wgs84) / len(coords_wgs84)
         center_lat = sum(c[1] for c in coords_wgs84) / len(coords_wgs84)
         center_x, center_y = WGS84_TO_BNG.transform(center_lon, center_lat)
 
-        # Get ground elevation
-        ground_z = get_ground_elevation(center_x, center_y, dtm_src)
+        # Determine chunk
+        chunk_x = int((center_x - origin_x) // chunk_size)
+        chunk_y = int((center_y - origin_y) // chunk_size)
+        chunk_key = f"{chunk_x}_{chunk_y}"
 
-        # Create mesh with zone colors
-        props = feature.get("properties", {})
-        mesh = extrude_building_with_uvs(geom, height, ground_z, origin, properties=props)
-        osm_id = props.get("osm_id", 0)
+        mesh = None
+
+        # Check if this building has a custom mesh
+        if osm_id in custom_mesh_ids:
+            mesh = load_custom_mesh(osm_id, origin)
+            if mesh is not None:
+                custom_loaded += 1
+                # Add OSM ID vertex attribute for selection
+                if 'osm_id' not in mesh.vertex_attributes:
+                    mesh.vertex_attributes['osm_id'] = np.full(
+                        len(mesh.vertices), osm_id, dtype=np.float32
+                    )
+
+        # Fall back to procedural generation if no custom mesh
+        if mesh is None:
+            ground_z = get_ground_elevation(center_x, center_y, dtm_src)
+            mesh = extrude_building_with_uvs(geom, height, ground_z, origin, properties=props)
 
         if mesh is not None and len(mesh.vertices) > 0:
-            # Determine chunk based on centroid
-            chunk_x = int((center_x - origin_x) // chunk_size)
-            chunk_y = int((center_y - origin_y) // chunk_size)
-            chunk_key = f"{chunk_x}_{chunk_y}"
-
             if chunk_key not in meshes_by_chunk:
                 meshes_by_chunk[chunk_key] = []
             meshes_by_chunk[chunk_key].append((mesh, osm_id))
@@ -506,7 +613,7 @@ def generate_building_meshes(buildings_path: Path, dtm_path: Path,
             print(f"  Processed {i + 1}/{len(buildings['features'])} buildings")
 
     dtm_src.close()
-    print(f"  Success: {success}, Failed: {failed}")
+    print(f"  Success: {success}, Failed: {failed}, Custom meshes: {custom_loaded}")
     return meshes_by_chunk
 
 

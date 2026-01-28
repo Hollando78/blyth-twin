@@ -26,8 +26,12 @@ import {
   loadAllAssets,
   updateWaterAnimation,
 } from "./asset-loader.ts";
-import { onPointerMove, onClick, hideBuildingInfo } from "./selection.ts";
+import { onPointerMove, onClick, hideBuildingInfo, getCurrentBuilding } from "./selection.ts";
 import { setupLayerMenu, updateLOD } from "./layers.ts";
+import { toggleEditMode, isEditModeEnabled, subscribeToEditState } from "./edit-mode.ts";
+import { initEditPanel, showEditPanel, hideEditPanel } from "./edit-panel.ts";
+import { initMeshUpload } from "./mesh-upload.ts";
+import { openPreviewWindow } from "./mesh-preview.ts";
 
 const state = createViewerState();
 
@@ -83,7 +87,7 @@ function animate() {
   state.renderer.render(state.scene, state.camera);
 }
 
-// Close button handler + layer menu
+// Close button handler + layer menu + edit mode
 document.addEventListener("DOMContentLoaded", () => {
   const closeBtn = document.getElementById("close-info");
   if (closeBtn) {
@@ -91,10 +95,54 @@ document.addEventListener("DOMContentLoaded", () => {
       state.selectedBuildingIndex = -1;
       state.buildingShaderUniforms.selectedBuildingId.value = -1.0;
       hideBuildingInfo();
+      hideEditPanel();
     });
   }
 
   setupLayerMenu(state);
+
+  // Initialize edit mode UI
+  initEditPanel();
+  initMeshUpload();
+
+  // Set up view mesh button
+  const viewMeshBtn = document.getElementById("view-mesh-btn");
+  if (viewMeshBtn) {
+    viewMeshBtn.addEventListener("click", () => {
+      const current = getCurrentBuilding();
+      if (current.osmId && state.selectedBuildingIndex >= 0) {
+        openPreviewWindow(state, current.osmId, state.selectedBuildingIndex);
+      }
+    });
+  }
+
+  // Set up edit button in building info panel
+  const editBtn = document.getElementById("edit-building-btn");
+  if (editBtn) {
+    editBtn.addEventListener("click", () => {
+      const current = getCurrentBuilding();
+      if (current.osmId && current.props) {
+        if (!isEditModeEnabled()) {
+          toggleEditMode();
+        }
+        showEditPanel(current.osmId, current.props);
+      }
+    });
+  }
+
+  // Set up edit mode toggle button
+  const editToggleBtn = document.getElementById("edit-mode-toggle");
+  if (editToggleBtn) {
+    editToggleBtn.addEventListener("click", () => {
+      toggleEditMode();
+    });
+
+    // Update button state when edit mode changes
+    subscribeToEditState((editState) => {
+      editToggleBtn.classList.toggle("active", editState.enabled);
+      editToggleBtn.textContent = editState.enabled ? "Exit Edit Mode" : "Edit Mode";
+    });
+  }
 });
 
 // Start

@@ -1,0 +1,7 @@
+# Blyth Digital Twin API dependencies
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+psycopg2-binary>=2.9.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+trimesh>=4.0.0

@@ -321,3 +321,892 @@ html, body {
   height: 12px;
   border-radius: 2px;
 }
+
+/* Edit Mode Button */
+.edit-mode-btn {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.edit-mode-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+  border-color: #87ceeb;
+}
+
+.edit-mode-btn.active {
+  background: #2196F3;
+  border-color: #2196F3;
+}
+
+/* Edit Button in Building Info */
+.btn-edit {
+  margin-top: 15px;
+  width: 100%;
+  padding: 10px;
+  background: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.btn-edit:hover {
+  background: #1976D2;
+}
+
+/* Edit Panel */
+#edit-panel {
+  position: absolute;
+  top: 70px;
+  left: 20px;
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 320px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+#edit-panel.hidden {
+  transform: translateX(-350px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.edit-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.edit-panel-header h3 {
+  color: #87ceeb;
+  font-size: 16px;
+  margin: 0;
+}
+
+#edit-close-btn {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+#edit-close-btn:hover {
+  color: white;
+}
+
+/* Edit Error Message */
+.edit-error {
+  background: rgba(244, 67, 54, 0.2);
+  border: 1px solid #F44336;
+  color: #ff8a80;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  font-size: 13px;
+}
+
+.edit-error.hidden {
+  display: none;
+}
+
+/* Edit Form Fields */
+.edit-field {
+  margin-bottom: 12px;
+}
+
+.edit-field label {
+  display: block;
+  color: #aaa;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.edit-field input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+
+.edit-field input:focus {
+  outline: none;
+  border-color: #87ceeb;
+}
+
+.edit-field input::placeholder {
+  color: #666;
+}
+
+/* Edit Note Field */
+.edit-note-field {
+  margin: 15px 0;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.edit-note-field label {
+  display: block;
+  color: #aaa;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.edit-note-field textarea {
+  width: 100%;
+  height: 60px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.edit-note-field textarea:focus {
+  outline: none;
+  border-color: #87ceeb;
+}
+
+/* Edit Actions */
+.edit-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.btn-primary {
+  flex: 1;
+  padding: 10px;
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #43A047;
+}
+
+.btn-primary:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  flex: 1;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ccc;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Override Actions */
+.edit-override-actions {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-danger {
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  color: #ff5252;
+  border: 1px solid #ff5252;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 82, 82, 0.1);
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-danger.hidden {
+  display: none;
+}
+
+/* Mesh Upload Section */
+#mesh-upload {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+#mesh-upload.hidden {
+  display: none;
+}
+
+.mesh-upload-header h4 {
+  color: #87ceeb;
+  font-size: 14px;
+  margin: 0 0 10px 0;
+}
+
+.mesh-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(76, 175, 80, 0.2);
+  border: 1px solid #4CAF50;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.mesh-status.hidden {
+  display: none;
+}
+
+.mesh-status span {
+  color: #a5d6a7;
+  font-size: 13px;
+}
+
+.btn-small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* Mesh Dropzone */
+.mesh-dropzone {
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mesh-dropzone:hover,
+.mesh-dropzone.dragover {
+  border-color: #87ceeb;
+  background: rgba(135, 206, 235, 0.1);
+}
+
+.mesh-dropzone.hidden {
+  display: none;
+}
+
+.dropzone-content svg {
+  color: #666;
+  margin-bottom: 10px;
+}
+
+.dropzone-content p {
+  color: #999;
+  font-size: 13px;
+  margin: 0;
+}
+
+.dropzone-hint {
+  color: #666 !important;
+  font-size: 11px !important;
+  margin-top: 5px !important;
+}
+
+/* Mesh Upload Progress */
+.mesh-progress {
+  margin-top: 10px;
+}
+
+.mesh-progress.hidden {
+  display: none;
+}
+
+.progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 50%;
+  background: #87ceeb;
+  animation: progress-pulse 1s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+  0%, 100% { width: 20%; margin-left: 0; }
+  50% { width: 50%; margin-left: 50%; }
+}
+
+.progress-text {
+  display: block;
+  color: #999;
+  font-size: 12px;
+  margin-top: 5px;
+  text-align: center;
+}
+
+/* Mesh Upload Error */
+.mesh-error {
+  background: rgba(244, 67, 54, 0.2);
+  border: 1px solid #F44336;
+  color: #ff8a80;
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.mesh-error.hidden {
+  display: none;
+}
+
+/* Mesh Preview Window */
+.preview-window {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 400px;
+  height: 350px;
+  background: rgba(20, 20, 35, 0.95);
+  border: 1px solid rgba(135, 206, 235, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1000;
+}
+
+.preview-window.hidden {
+  display: none;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: grab;
+  user-select: none;
+}
+
+.preview-title {
+  color: #87ceeb;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.preview-controls {
+  display: flex;
+  gap: 5px;
+}
+
+.preview-controls button {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #999;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.preview-controls button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.preview-content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#preview-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.preview-info {
+  padding: 8px 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#preview-osm-id {
+  color: #888;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.preview-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(135, 206, 235, 0.3) 50%);
+}
+
+.preview-resize-handle:hover {
+  background: linear-gradient(135deg, transparent 50%, rgba(135, 206, 235, 0.5) 50%);
+}
+
+/* View Mesh Button in Building Info */
+.btn-view-mesh {
+  margin-top: 10px;
+  width: 100%;
+  padding: 8px;
+  background: rgba(135, 206, 235, 0.2);
+  color: #87ceeb;
+  border: 1px solid rgba(135, 206, 235, 0.4);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.btn-view-mesh:hover {
+  background: rgba(135, 206, 235, 0.3);
+  border-color: #87ceeb;
+}
+
+/* Preview Edit Button */
+.preview-edit-btn {
+  font-size: 14px;
+}
+
+.preview-edit-btn.active {
+  background: #2196F3 !important;
+  color: white !important;
+}
+
+/* ============================================================ */
+/* MESH EDITOR STYLES                                           */
+/* ============================================================ */
+
+.mesh-editor-ui {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.8);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
+  flex-wrap: wrap;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-label {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.toolbar-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 4px;
+}
+
+.tool-btn {
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.tool-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.tool-btn.active {
+  background: #2196F3;
+  border-color: #2196F3;
+  color: white;
+}
+
+.tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tool-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mode-buttons .mode-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.toolbar-snap {
+  margin-left: auto;
+}
+
+.snap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #aaa;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.snap-toggle input {
+  accent-color: #87ceeb;
+}
+
+/* Editor Status Bar */
+.editor-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #999;
+  font-size: 11px;
+  font-family: monospace;
+  pointer-events: auto;
+}
+
+.status-divider {
+  color: #555;
+}
+
+/* Editor Action Buttons */
+.editor-actions {
+  position: absolute;
+  bottom: 40px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+  pointer-events: auto;
+}
+
+.editor-actions .btn-primary,
+.editor-actions .btn-secondary {
+  padding: 8px 20px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.editor-actions .btn-primary {
+  background: #4CAF50;
+  color: white;
+  border: none;
+}
+
+.editor-actions .btn-primary:hover:not(:disabled) {
+  background: #43A047;
+}
+
+.editor-actions .btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ccc;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.editor-actions .btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Editor Dialog */
+.editor-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 20, 35, 0.95);
+  border: 1px solid rgba(135, 206, 235, 0.3);
+  border-radius: 8px;
+  padding: 20px;
+  min-width: 250px;
+  pointer-events: auto;
+  z-index: 1001;
+}
+
+.editor-dialog.hidden {
+  display: none;
+}
+
+.editor-dialog h4 {
+  color: #87ceeb;
+  margin: 0 0 15px 0;
+  font-size: 14px;
+}
+
+.dialog-field {
+  margin-bottom: 15px;
+}
+
+.dialog-field label {
+  display: block;
+  color: #aaa;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.dialog-field input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 14px;
+}
+
+.dialog-field input:focus {
+  outline: none;
+  border-color: #87ceeb;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.dialog-actions button {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Material Panel */
+.material-panel {
+  position: absolute;
+  top: 60px;
+  right: 10px;
+  width: 200px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.material-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.material-panel-header h4 {
+  color: #87ceeb;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.panel-toggle {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0;
+}
+
+.material-panel-content {
+  padding: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.material-panel-content.collapsed {
+  display: none;
+}
+
+.material-field {
+  margin-bottom: 10px;
+}
+
+.material-field label {
+  display: block;
+  color: #888;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.material-field input[type="color"] {
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.material-field input[type="range"] {
+  width: calc(100% - 30px);
+  vertical-align: middle;
+}
+
+.material-field input[type="range"] + span {
+  display: inline-block;
+  width: 28px;
+  text-align: right;
+  color: #aaa;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.material-field input[type="number"] {
+  width: 60px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 12px;
+}
+
+.material-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.material-checkbox input {
+  accent-color: #87ceeb;
+}
+
+.material-checkbox label {
+  display: inline;
+  margin: 0;
+}
+
+.material-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 10px 0;
+}
+
+/* Texture Dropzone in Material Panel */
+.texture-dropzone {
+  border: 2px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 15px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.texture-dropzone:hover,
+.texture-dropzone.dragover {
+  border-color: #87ceeb;
+  background: rgba(135, 206, 235, 0.1);
+}
+
+.texture-dropzone span {
+  color: #666;
+  font-size: 11px;
+}
+
+/* Mesh Editor Resize - make preview window larger when editing */
+.preview-window:has(.mesh-editor-ui) {
+  width: 600px;
+  height: 500px;
+}

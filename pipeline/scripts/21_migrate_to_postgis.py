@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-migrate_to_postgis.py - Migrate GeoJSON data to PostGIS
+21_migrate_to_postgis.py - Migrate raw OSM GeoJSON data to PostGIS
 
-Loads all GeoJSON data into the PostGIS database.
+Loads raw OSM buildings (without heights) into PostGIS as the single source of truth.
+Heights are computed later by 50_building_heights.py.
+
+This script reads from raw/osm/buildings.geojson (not processed), initializes
+height/height_source as NULL, and adds audit columns.
 
 Usage:
-    python migrate_to_postgis.py
+    python 21_migrate_to_postgis.py
 """
 
 import json
+import os
 from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import execute_values
 from shapely.geometry import shape
-from shapely import wkb
 from pyproj import Transformer
 
 # Paths
@@ -22,15 +26,6 @@ SCRIPT_DIR = Path(__file__).parent
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
 DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 RAW_DIR = DATA_DIR / "raw" / "osm"
-PROCESSED_DIR = DATA_DIR / "processed"
-
-# Database connection
-DB_CONFIG = {
-    "host": "localhost",
-    "database": "blyth_twin",
-    "user": "postgres",
-    "password": ""  # Local trust auth
-}
 
 # Coordinate transformer
 WGS84_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
@@ -38,17 +33,7 @@ WGS84_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
 
 def get_connection():
     """Get database connection."""
-    # Try different connection methods
-    import os
-
-    # Method 1: If running as postgres user or with trust auth
-    try:
-        return psycopg2.connect("dbname=blyth_twin")
-    except:
-        pass
-
-    # Method 2: Use password from environment
-    password = os.environ.get("PGPASSWORD", "")
+    password = os.environ.get("PGPASSWORD", "blyth123")
     try:
         return psycopg2.connect(
             host="localhost",
@@ -56,20 +41,15 @@ def get_connection():
             user="postgres",
             password=password
         )
-    except:
-        pass
-
-    # Method 3: Try with local socket and trust
-    return psycopg2.connect(
-        "dbname=blyth_twin host=localhost user=postgres"
-    )
+    except Exception:
+        # Fallback: try trust auth
+        return psycopg2.connect("dbname=blyth_twin")
 
 
 def transform_geometry(geom_dict: dict) -> str:
     """Transform GeoJSON geometry to WKB in BNG (EPSG:27700)."""
     geom = shape(geom_dict)
 
-    # Transform coordinates from WGS84 to BNG
     if geom.geom_type == 'Polygon':
         exterior = [WGS84_TO_BNG.transform(x, y) for x, y in geom.exterior.coords]
         interiors = [[WGS84_TO_BNG.transform(x, y) for x, y in ring.coords]
@@ -97,9 +77,40 @@ def transform_geometry(geom_dict: dict) -> str:
     return geom.wkb_hex
 
 
+def ensure_audit_columns(conn):
+    """Ensure audit columns exist on the buildings table."""
+    cur = conn.cursor()
+
+    # Check if columns exist and add if not
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'buildings' AND column_name IN ('created_at', 'updated_at', 'source')
+    """)
+    existing = {row[0] for row in cur.fetchall()}
+
+    if 'created_at' not in existing:
+        cur.execute("ALTER TABLE buildings ADD COLUMN created_at TIMESTAMP DEFAULT NOW()")
+        print("  Added created_at column")
+
+    if 'updated_at' not in existing:
+        cur.execute("ALTER TABLE buildings ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()")
+        print("  Added updated_at column")
+
+    if 'source' not in existing:
+        cur.execute("ALTER TABLE buildings ADD COLUMN source VARCHAR(20) DEFAULT 'osm'")
+        print("  Added source column")
+
+    conn.commit()
+    cur.close()
+
+
 def migrate_buildings(conn):
-    """Migrate buildings from GeoJSON to PostGIS."""
-    buildings_path = PROCESSED_DIR / "buildings_height.geojson"
+    """Migrate buildings from raw OSM GeoJSON to PostGIS.
+
+    Reads from raw/osm/buildings.geojson (not processed).
+    Initializes height and height_source as NULL.
+    """
+    buildings_path = RAW_DIR / "buildings.geojson"
 
     if not buildings_path.exists():
         print(f"  Buildings file not found: {buildings_path}")
@@ -128,7 +139,7 @@ def migrate_buildings(conn):
 
         try:
             geom_wkb = transform_geometry(geom)
-        except Exception as e:
+        except Exception:
             continue
 
         # Extract address fields (handle both : and _ variants)
@@ -139,11 +150,12 @@ def migrate_buildings(conn):
         addr_city = props.get("addr:city") or props.get("addr_city")
         addr_suburb = props.get("addr:suburb") or props.get("addr_suburb")
 
+        # Note: height and height_source are NULL - computed by 50_building_heights.py
         row = (
             props.get("osm_id"),
             geom_wkb,
-            props.get("height"),
-            props.get("height_source"),
+            None,  # height - computed later
+            None,  # height_source - computed later
             props.get("building:levels"),
             props.get("building", "yes"),
             addr_housenumber,
@@ -156,22 +168,23 @@ def migrate_buildings(conn):
             props.get("amenity"),
             props.get("shop"),
             props.get("office"),
-            json.dumps(props)
+            json.dumps(props),
+            'osm',  # source
         )
         rows.append(row)
 
-    # Batch insert
+    # Batch insert with audit columns
     sql = """
         INSERT INTO buildings (
             osm_id, geometry, height, height_source, levels, building_type,
             addr_housenumber, addr_housename, addr_street, addr_postcode,
-            addr_city, addr_suburb, name, amenity, shop, office, tags
+            addr_city, addr_suburb, name, amenity, shop, office, tags, source
         ) VALUES %s
     """
 
     template = """(
         %s, ST_SetSRID(ST_GeomFromWKB(decode(%s, 'hex')), 27700),
-        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
     )"""
 
     execute_values(cur, sql, rows, template=template, page_size=1000)
@@ -320,11 +333,9 @@ def migrate_aoi(conn):
     cur = conn.cursor()
     cur.execute("TRUNCATE aoi RESTART IDENTITY CASCADE")
 
-    # AOI geometry (already in WGS84, need to transform)
     geom = feat["geometry"]
     geom_wkb = transform_geometry(geom)
 
-    # Centre point
     centre_bng = props["centre_bng"]
 
     cur.execute("""
@@ -340,18 +351,17 @@ def migrate_aoi(conn):
 
 def create_chunks(conn):
     """Create chunk records based on building distribution."""
+    import yaml
+
     cur = conn.cursor()
     cur.execute("TRUNCATE chunks RESTART IDENTITY CASCADE")
 
-    # Get settings for chunk size
-    import yaml
     settings_path = CONFIG_DIR / "settings.yaml"
     with open(settings_path) as f:
         settings = yaml.safe_load(f)
 
     chunk_size = settings["terrain"]["chunk_size_m"]
 
-    # Get AOI centre
     cur.execute("SELECT ST_X(centre), ST_Y(centre) FROM aoi LIMIT 1")
     row = cur.fetchone()
     if not row:
@@ -360,7 +370,6 @@ def create_chunks(conn):
 
     origin_x, origin_y = row
 
-    # Find unique chunks from buildings
     cur.execute(f"""
         SELECT
             FLOOR((ST_X(centroid) - {origin_x}) / {chunk_size})::int AS chunk_x,
@@ -376,13 +385,11 @@ def create_chunks(conn):
     for chunk_x, chunk_y, building_count in chunks:
         chunk_key = f"{chunk_x}_{chunk_y}"
 
-        # Calculate chunk bounds
         min_x = origin_x + chunk_x * chunk_size
         min_y = origin_y + chunk_y * chunk_size
         max_x = min_x + chunk_size
         max_y = min_y + chunk_size
 
-        # Check for reference imagery
         sv_path = DATA_DIR / "reference" / "streetview" / chunk_key
         aerial_path = DATA_DIR / "reference" / "aerial" / f"{chunk_key}.jpg"
 
@@ -410,9 +417,11 @@ def print_stats(conn):
     print("DATABASE STATISTICS")
     print("=" * 50)
 
-    # Buildings
     cur.execute("SELECT COUNT(*) FROM buildings")
     print(f"Buildings: {cur.fetchone()[0]:,}")
+
+    cur.execute("SELECT COUNT(*) FROM buildings WHERE height IS NOT NULL")
+    print(f"  - with height: {cur.fetchone()[0]:,}")
 
     cur.execute("SELECT COUNT(*) FROM buildings WHERE addr_street IS NOT NULL")
     print(f"  - with street address: {cur.fetchone()[0]:,}")
@@ -420,47 +429,33 @@ def print_stats(conn):
     cur.execute("SELECT COUNT(*) FROM buildings WHERE addr_postcode IS NOT NULL")
     print(f"  - with postcode: {cur.fetchone()[0]:,}")
 
-    # Roads
     cur.execute("SELECT COUNT(*) FROM roads")
     print(f"Roads: {cur.fetchone()[0]:,}")
 
-    # Water
     cur.execute("SELECT COUNT(*) FROM water_features")
     print(f"Water features: {cur.fetchone()[0]:,}")
 
-    # Chunks
     cur.execute("SELECT COUNT(*) FROM chunks")
     print(f"Chunks: {cur.fetchone()[0]:,}")
-
-    cur.execute("SELECT COUNT(*) FROM chunks WHERE has_streetview")
-    print(f"  - with Street View: {cur.fetchone()[0]:,}")
-
-    # Sample addresses
-    print("\nSample addresses:")
-    cur.execute("""
-        SELECT addr_housenumber, addr_street, addr_postcode
-        FROM buildings
-        WHERE addr_street IS NOT NULL AND addr_housenumber IS NOT NULL
-        LIMIT 5
-    """)
-    for row in cur.fetchall():
-        print(f"  {row[0]} {row[1]}, {row[2] or 'no postcode'}")
 
     cur.close()
 
 
 def main():
-    """Run migration."""
+    """Run migration from raw OSM data to PostGIS."""
     print("=" * 50)
-    print("MIGRATING DATA TO POSTGIS")
+    print("MIGRATING RAW OSM DATA TO POSTGIS")
     print("=" * 50)
     print()
 
     conn = get_connection()
 
-    print("Migrating buildings...")
+    print("Ensuring audit columns exist...")
+    ensure_audit_columns(conn)
+
+    print("\nMigrating buildings from raw OSM...")
     building_count = migrate_buildings(conn)
-    print(f"  Migrated: {building_count:,} buildings")
+    print(f"  Migrated: {building_count:,} buildings (heights to be computed)")
 
     print("\nMigrating roads...")
     road_count = migrate_roads(conn)
@@ -481,7 +476,7 @@ def main():
     print_stats(conn)
 
     conn.close()
-    print("\nDone!")
+    print("\nDone! Run 50_building_heights.py next to compute heights.")
 
 
 if __name__ == "__main__":

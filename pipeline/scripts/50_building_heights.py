@@ -3,42 +3,56 @@
 50_building_heights.py - Building Height Derivation
 
 Derives building heights using a priority order:
-1. OSM 'height' tag
+1. OSM 'height' tag (from raw data)
 2. OSM 'building:levels' * storey_height
 3. LiDAR nDSM (90th percentile within footprint)
 
+Reads building geometries from PostGIS and UPDATEs heights directly.
+This script replaces the previous GeoJSON-based workflow.
+
 Input:
-    - data/raw/osm/buildings.geojson
+    - PostGIS buildings table (populated by 21_migrate_to_postgis.py)
     - data/interim/ndsm_clip.tif
 
 Output:
-    - data/processed/buildings_height.geojson
+    - Updated height/height_source columns in PostGIS
 
 Usage:
     python 50_building_heights.py
 """
 
 import json
+import os
 import re
 from pathlib import Path
 
 import numpy as np
+import psycopg2
 import rasterio
 from rasterio.mask import mask
 from shapely.geometry import shape, mapping
-from pyproj import Transformer
+from shapely import wkb
 import yaml
-
-# Coordinate transformer (WGS84 to BNG)
-WGS84_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
 DATA_DIR = SCRIPT_DIR.parent.parent / "data"
-RAW_DIR = DATA_DIR / "raw"
 INTERIM_DIR = DATA_DIR / "interim"
-PROCESSED_DIR = DATA_DIR / "processed"
+
+
+def get_connection():
+    """Get database connection."""
+    password = os.environ.get("PGPASSWORD", "blyth123")
+    try:
+        return psycopg2.connect(
+            host="localhost",
+            database="blyth_twin",
+            user="postgres",
+            password=password
+        )
+    except Exception:
+        return psycopg2.connect("dbname=blyth_twin")
 
 
 def load_settings() -> dict:
@@ -52,7 +66,6 @@ def parse_height(height_str: str) -> float | None:
     if not height_str:
         return None
 
-    # Handle common formats: "10", "10m", "10 m", "10.5"
     match = re.match(r"([\d.]+)\s*m?", str(height_str).strip())
     if match:
         try:
@@ -62,28 +75,20 @@ def parse_height(height_str: str) -> float | None:
     return None
 
 
-def transform_geometry_to_bng(geometry: dict) -> dict:
-    """Transform geometry from WGS84 to BNG (EPSG:27700)."""
-    def transform_coords(coords):
-        return [list(WGS84_TO_BNG.transform(c[0], c[1])) for c in coords]
-
-    if geometry['type'] == 'Polygon':
-        new_coords = [transform_coords(ring) for ring in geometry['coordinates']]
-        return {'type': 'Polygon', 'coordinates': new_coords}
-    elif geometry['type'] == 'MultiPolygon':
-        new_coords = [[transform_coords(ring) for ring in poly] for poly in geometry['coordinates']]
-        return {'type': 'MultiPolygon', 'coordinates': new_coords}
-    return geometry
-
-
 def get_ndsm_height(geometry, ndsm_src, percentile: int = 90) -> float | None:
-    """Extract height from nDSM using percentile within footprint."""
+    """Extract height from nDSM using percentile within footprint.
+
+    Args:
+        geometry: Shapely geometry in BNG (EPSG:27700)
+        ndsm_src: Open rasterio dataset
+        percentile: Percentile to use (default 90th)
+    """
     try:
-        # Transform geometry from WGS84 to BNG
-        geom_bng = transform_geometry_to_bng(geometry)
+        # Create GeoJSON-like dict from shapely geometry (already in BNG)
+        geom_dict = mapping(geometry)
 
         # Mask nDSM to building footprint
-        out_image, _ = mask(ndsm_src, [geom_bng], crop=True, all_touched=True)
+        out_image, _ = mask(ndsm_src, [geom_dict], crop=True, all_touched=True)
         data = out_image[0]
 
         # Filter valid values (> 0, not nodata)
@@ -98,52 +103,69 @@ def get_ndsm_height(geometry, ndsm_src, percentile: int = 90) -> float | None:
         return None
 
 
-def derive_heights(buildings_path: Path, ndsm_path: Path, output_path: Path, settings: dict):
-    """Derive heights for all buildings."""
+def derive_heights(conn, ndsm_path: Path, settings: dict):
+    """Derive heights for all buildings in PostGIS."""
     storey_height = settings["buildings"]["storey_height_m"]
     percentile = settings["buildings"]["ndsm_percentile"]
     min_height = settings["buildings"]["min_height_m"]
     max_height = settings["buildings"]["max_height_m"]
 
-    print(f"Loading buildings from {buildings_path}...")
-    with open(buildings_path) as f:
-        buildings = json.load(f)
-
     print(f"Opening nDSM: {ndsm_path}...")
     ndsm_src = rasterio.open(ndsm_path)
 
+    cur = conn.cursor()
+
+    # Get all buildings that need height calculation
+    # Include OSM height tag from stored tags for priority 1
+    cur.execute("""
+        SELECT id, osm_id, geometry, levels, tags
+        FROM buildings
+        ORDER BY id
+    """)
+
+    buildings = cur.fetchall()
+    total = len(buildings)
+    print(f"Processing {total} buildings...")
+
     # Statistics
     stats = {"osm_height": 0, "osm_levels": 0, "lidar": 0, "default": 0}
+    batch_updates = []
 
-    print(f"Processing {len(buildings['features'])} buildings...")
-
-    for i, feature in enumerate(buildings["features"]):
-        props = feature.get("properties", {})
-        geom = feature.get("geometry")
-
+    for i, (building_id, osm_id, geom_wkb, levels, tags_json) in enumerate(buildings):
         height = None
         source = None
 
+        # Parse tags JSON
+        try:
+            tags = json.loads(tags_json) if tags_json else {}
+        except (json.JSONDecodeError, TypeError):
+            tags = {}
+
         # Priority 1: OSM height tag
-        if "height" in props:
-            height = parse_height(props["height"])
+        osm_height_str = tags.get("height")
+        if osm_height_str:
+            height = parse_height(osm_height_str)
             if height:
                 source = "osm_height"
 
         # Priority 2: OSM building:levels
-        if height is None and "building:levels" in props:
+        if height is None and levels:
             try:
-                levels = int(props["building:levels"])
-                height = levels * storey_height
+                height = int(levels) * storey_height
                 source = "osm_levels"
             except (ValueError, TypeError):
                 pass
 
         # Priority 3: LiDAR nDSM
-        if height is None and geom:
-            height = get_ndsm_height(geom, ndsm_src, percentile)
-            if height:
-                source = "lidar"
+        if height is None and geom_wkb:
+            try:
+                # Convert WKB to shapely geometry (already in BNG)
+                geom = wkb.loads(geom_wkb, hex=True)
+                height = get_ndsm_height(geom, ndsm_src, percentile)
+                if height:
+                    source = "lidar"
+            except Exception:
+                pass
 
         # Fallback: default height
         if height is None:
@@ -153,23 +175,28 @@ def derive_heights(buildings_path: Path, ndsm_path: Path, output_path: Path, set
         # Clamp height
         height = max(min_height, min(height, max_height))
 
-        # Update feature
-        feature["properties"]["height"] = round(height, 1)
-        feature["properties"]["height_source"] = source
-
         stats[source] += 1
+        batch_updates.append((round(height, 1), source, building_id))
 
         if (i + 1) % 500 == 0:
-            print(f"  Processed {i + 1}/{len(buildings['features'])} buildings")
+            print(f"  Processed {i + 1}/{total} buildings")
 
     ndsm_src.close()
 
-    # Save output
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(buildings, f)
+    # Batch update
+    print(f"\nUpdating {len(batch_updates)} buildings in PostGIS...")
 
-    print(f"\nWritten: {output_path}")
+    update_cur = conn.cursor()
+    update_cur.executemany("""
+        UPDATE buildings
+        SET height = %s, height_source = %s, updated_at = NOW()
+        WHERE id = %s
+    """, batch_updates)
+
+    conn.commit()
+    update_cur.close()
+    cur.close()
+
     print(f"\nHeight source breakdown:")
     print(f"  OSM height tag: {stats['osm_height']}")
     print(f"  OSM levels: {stats['osm_levels']}")
@@ -178,22 +205,75 @@ def derive_heights(buildings_path: Path, ndsm_path: Path, output_path: Path, set
     print(f"  Total: {sum(stats.values())}")
 
 
+def print_stats(conn):
+    """Print height statistics from PostGIS."""
+    cur = conn.cursor()
+
+    print("\n" + "=" * 50)
+    print("HEIGHT STATISTICS")
+    print("=" * 50)
+
+    cur.execute("SELECT COUNT(*) FROM buildings WHERE height IS NOT NULL")
+    print(f"Buildings with height: {cur.fetchone()[0]:,}")
+
+    cur.execute("""
+        SELECT height_source, COUNT(*)
+        FROM buildings
+        WHERE height IS NOT NULL
+        GROUP BY height_source
+        ORDER BY COUNT(*) DESC
+    """)
+    for source, count in cur.fetchall():
+        print(f"  - {source}: {count:,}")
+
+    cur.execute("""
+        SELECT
+            MIN(height) as min_h,
+            AVG(height) as avg_h,
+            MAX(height) as max_h
+        FROM buildings
+        WHERE height IS NOT NULL
+    """)
+    row = cur.fetchone()
+    if row and row[0]:
+        print(f"\nHeight range: {row[0]:.1f}m - {row[2]:.1f}m (avg: {row[1]:.1f}m)")
+
+    cur.close()
+
+
 def main():
-    """Derive building heights."""
+    """Derive building heights and update PostGIS."""
+    print("=" * 50)
+    print("BUILDING HEIGHT DERIVATION (PostGIS)")
+    print("=" * 50)
+    print()
+
     settings = load_settings()
-
-    buildings_path = RAW_DIR / "osm" / "buildings.geojson"
     ndsm_path = INTERIM_DIR / "ndsm_clip.tif"
-    output_path = PROCESSED_DIR / "buildings_height.geojson"
 
-    if not buildings_path.exists():
-        raise FileNotFoundError(f"Buildings not found: {buildings_path}")
     if not ndsm_path.exists():
         raise FileNotFoundError(f"nDSM not found: {ndsm_path}")
 
-    derive_heights(buildings_path, ndsm_path, output_path, settings)
+    conn = get_connection()
 
-    print("\nDone!")
+    # Check buildings exist
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM buildings")
+    count = cur.fetchone()[0]
+    cur.close()
+
+    if count == 0:
+        print("No buildings found in PostGIS. Run 21_migrate_to_postgis.py first.")
+        conn.close()
+        return
+
+    print(f"Found {count:,} buildings in PostGIS")
+
+    derive_heights(conn, ndsm_path, settings)
+    print_stats(conn)
+
+    conn.close()
+    print("\nDone! Run 51_export_buildings.py to export to GeoJSON.")
 
 
 if __name__ == "__main__":

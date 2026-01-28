@@ -238,6 +238,19 @@ function capitalizeFirst(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1).replace(/_/g, " ");
 }
 
+// Track the currently displayed building for edit mode
+let currentDisplayedBuilding: { osmId: number | null; props: BuildingProperties | null } = {
+  osmId: null,
+  props: null,
+};
+
+/**
+ * Get the currently displayed building info.
+ */
+export function getCurrentBuilding(): { osmId: number | null; props: BuildingProperties | null } {
+  return currentDisplayedBuilding;
+}
+
 /**
  * Show building info panel
  */
@@ -247,6 +260,12 @@ export function showBuildingInfo(props: BuildingProperties | null, vertexOsmId?:
   const propsEl = document.getElementById("building-props");
 
   if (!panel || !nameEl || !propsEl) return;
+
+  // Track current building for edit mode
+  currentDisplayedBuilding = {
+    osmId: props?.osm_id || vertexOsmId || null,
+    props,
+  };
 
   let displayName = "Building";
   if (props?.name) {
@@ -314,4 +333,7 @@ export function hideBuildingInfo() {
   if (panel) {
     panel.classList.add("hidden");
   }
+
+  // Clear tracked building
+  currentDisplayedBuilding = { osmId: null, props: null };
 }
