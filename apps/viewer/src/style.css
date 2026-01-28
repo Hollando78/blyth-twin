@@ -115,10 +115,121 @@ html, body {
   color: #87ceeb;
 }
 
+/* Layer Menu */
+#layer-menu {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  pointer-events: auto;
+  z-index: 100;
+}
+
+#burger-btn {
+  width: 40px;
+  height: 40px;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  padding: 10px;
+  transition: background 0.2s;
+}
+
+#burger-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+#burger-btn span {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: white;
+  border-radius: 1px;
+  transition: transform 0.2s, opacity 0.2s;
+}
+
+#burger-btn.open span:nth-child(1) {
+  transform: rotate(45deg) translate(5px, 5px);
+}
+
+#burger-btn.open span:nth-child(2) {
+  opacity: 0;
+}
+
+#burger-btn.open span:nth-child(3) {
+  transform: rotate(-45deg) translate(5px, -5px);
+}
+
+#layer-panel {
+  position: absolute;
+  top: 50px;
+  right: 0;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 8px;
+  padding: 15px;
+  min-width: 160px;
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+#layer-panel.hidden {
+  transform: translateY(-10px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#layer-panel h3 {
+  color: #87ceeb;
+  font-size: 14px;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+#layer-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: white;
+  font-size: 13px;
+  padding: 6px 0;
+  cursor: pointer;
+  transition: color 0.2s;
+  pointer-events: auto;
+}
+
+#layer-panel label:hover {
+  color: #87ceeb;
+}
+
+#layer-panel input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #87ceeb;
+  cursor: pointer;
+}
+
+#layer-panel label.sub-option {
+  margin-left: 24px;
+  font-size: 12px;
+  color: #aaa;
+}
+
+#layer-panel label.sub-option input:disabled + span,
+#layer-panel label.sub-option:has(input:disabled) {
+  opacity: 0.5;
+}
+
 /* Building Info Panel */
 #building-info {
   position: absolute;
-  top: 20px;
+  top: 70px;
   right: 20px;
   background: rgba(0, 0, 0, 0.85);
   color: white;
@@ -180,4 +291,33 @@ html, body {
 #building-props dd {
   margin: 0;
   color: #eee;
+}
+
+/* Zone Legend */
+#zone-legend {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#zone-legend.hidden {
+  display: none;
+}
+
+.zone-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #ccc;
+}
+
+.zone-key i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
 }

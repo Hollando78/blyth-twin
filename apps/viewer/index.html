@@ -27,6 +27,33 @@
         <div id="hud">
           <span id="position"></span>
         </div>
+        <div id="layer-menu">
+          <button id="burger-btn" aria-label="Toggle layers menu">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <div id="layer-panel" class="hidden">
+            <h3>Layers</h3>
+            <label><input type="checkbox" data-layer="terrain" checked /> Terrain</label>
+            <label><input type="checkbox" data-layer="buildings" checked /> Buildings</label>
+            <label><input type="checkbox" data-layer="roads" checked /> Roads</label>
+            <label><input type="checkbox" data-layer="railways" checked /> Railways</label>
+            <label><input type="checkbox" data-layer="water" checked /> Water</label>
+            <label><input type="checkbox" data-layer="sea" checked /> Sea</label>
+            <hr style="margin: 8px 0; border-color: #444;" />
+            <label><input type="checkbox" id="wireframe-toggle" /> Wireframe</label>
+            <label><input type="checkbox" id="textures-toggle" checked /> Building Textures</label>
+            <label class="sub-option"><input type="checkbox" id="zone-toggle" disabled /> Zone Colors</label>
+            <div id="zone-legend" class="hidden">
+              <span class="zone-key"><i style="background:#4CAF50"></i> Residential</span>
+              <span class="zone-key"><i style="background:#2196F3"></i> Commercial</span>
+              <span class="zone-key"><i style="background:#FF9800"></i> Industrial</span>
+              <span class="zone-key"><i style="background:#9C27B0"></i> Civic</span>
+              <span class="zone-key"><i style="background:#795548"></i> Other</span>
+            </div>
+          </div>
+        </div>
         <div id="building-info" class="hidden">
           <button id="close-info">&times;</button>
           <h2 id="building-name">Building</h2>
@@ -35,5 +62,15 @@
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
+    <script>
+      // Register Service Worker for caching
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('SW registered'))
+            .catch(err => console.log('SW registration failed:', err));
+        });
+      }
+    </script>
   </body>
 </html>

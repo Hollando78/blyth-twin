@@ -49,6 +49,7 @@ METADATA_PROPERTIES = [
     "addr:city",
     "height",
     "height_source",
+    "osm_id",
 ]
 
 
@@ -91,7 +92,8 @@ def extract_metadata(properties: dict) -> dict:
 
 
 def create_footprint_mesh(geometry_wgs84: dict, ground_z: float,
-                          origin: tuple[float, float], z_offset: float = 0.5) -> tuple[trimesh.Trimesh | None, int]:
+                          origin: tuple[float, float], z_offset: float = 0.5,
+                          osm_id: int | None = None) -> tuple[trimesh.Trimesh | None, int]:
     """
     Create a flat footprint polygon at ground level.
 
@@ -100,6 +102,7 @@ def create_footprint_mesh(geometry_wgs84: dict, ground_z: float,
         ground_z: Ground elevation at building location
         origin: Local origin for coordinate translation
         z_offset: Height above ground to avoid z-fighting
+        osm_id: OSM ID to store as vertex attribute
 
     Returns:
         Tuple of (mesh, face_count) or (None, 0) on failure
@@ -134,6 +137,10 @@ def create_footprint_mesh(geometry_wgs84: dict, ground_z: float,
 
         # Flatten to ground_z + offset
         mesh.vertices[:, 2] = ground_z + z_offset
+
+        # Add OSM ID as vertex attribute
+        if osm_id is not None:
+            mesh.vertex_attributes['osm_id'] = np.full(len(mesh.vertices), osm_id, dtype=np.float32)
 
         return mesh, len(mesh.faces)
     except Exception:
@@ -183,7 +190,8 @@ def generate_footprints(buildings_path: Path, dtm_path: Path,
         ground_z = get_ground_elevation(center_x, center_y, dtm_src)
 
         # Create footprint mesh
-        mesh, face_count = create_footprint_mesh(geom, ground_z, origin)
+        osm_id = props.get('osm_id') if props else None
+        mesh, face_count = create_footprint_mesh(geom, ground_z, origin, osm_id=osm_id)
 
         if mesh is not None and face_count > 0:
             # Determine chunk based on centroid
