@@ -53,6 +53,7 @@ let editorContext: EditorContext | null = null;
 
 /**
  * Open the mesh editor for a given geometry.
+ * @param existingMaterial - Optional material to use (e.g., from a custom mesh). If not provided, a default is created.
  */
 export function openMeshEditor(
   scene: THREE.Scene,
@@ -60,7 +61,8 @@ export function openMeshEditor(
   controls: OrbitControls | null,
   geometry: THREE.BufferGeometry,
   osmId: number,
-  container: HTMLElement
+  container: HTMLElement,
+  existingMaterial?: THREE.Material | null
 ): void {
   // Close any existing editor
   if (getEditorState().isOpen) {
@@ -77,13 +79,21 @@ export function openMeshEditor(
     return;
   }
 
-  // Create working mesh
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x8b7355,
-    roughness: 0.8,
-    metalness: 0.1,
-    side: THREE.DoubleSide,
-  });
+  // Use existing material or create default
+  let material: THREE.MeshStandardMaterial;
+  if (existingMaterial && existingMaterial instanceof THREE.MeshStandardMaterial) {
+    // Clone the existing material to avoid modifying the original
+    material = existingMaterial.clone();
+    console.log(`Editor using existing material with color: ${material.color.getHexString()}`);
+  } else {
+    material = new THREE.MeshStandardMaterial({
+      color: 0x8b7355,
+      roughness: 0.8,
+      metalness: 0.1,
+      side: THREE.DoubleSide,
+    });
+  }
+  material.side = THREE.DoubleSide; // Ensure double-sided
 
   const workingMesh = new THREE.Mesh(state.workingGeometry, material);
   scene.add(workingMesh);

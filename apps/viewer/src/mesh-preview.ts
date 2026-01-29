@@ -17,6 +17,7 @@ import {
   openMeshEditor,
   closeMeshEditor,
   updateEditor,
+  getEditorState,
 } from "./mesh-editor/index.ts";
 
 interface PreviewState {
@@ -28,6 +29,7 @@ interface PreviewState {
   controls: OrbitControls | null;
   buildingMesh: THREE.Object3D | null;
   buildingGeometry: THREE.BufferGeometry | null;
+  buildingMaterial: THREE.Material | null; // Store the building's material for editor
   animationId: number | null;
   isOpen: boolean;
   isEditMode: boolean;
@@ -35,6 +37,13 @@ interface PreviewState {
   currentGlobalId: number | null;
   isDragging: boolean;
   dragOffset: { x: number; y: number };
+  // Original building position for placing custom mesh back in world
+  originalCenter: THREE.Vector3 | null;
+  originalBaseZ: number;
+  // Reference to main viewer state
+  mainViewerState: ViewerState | null;
+  // Chunk info for hiding original faces
+  buildingChunkInfo: { chunkId: string; startFace: number; endFace: number } | null;
 }
 
 const previewState: PreviewState = {
@@ -46,6 +55,7 @@ const previewState: PreviewState = {
   controls: null,
   buildingMesh: null,
   buildingGeometry: null,
+  buildingMaterial: null,
   animationId: null,
   isOpen: false,
   isEditMode: false,
@@ -53,6 +63,10 @@ const previewState: PreviewState = {
   currentGlobalId: null,
   isDragging: false,
   dragOffset: { x: 0, y: 0 },
+  originalCenter: null,
+  originalBaseZ: 0,
+  mainViewerState: null,
+  buildingChunkInfo: null,
 };
 
 /**
@@ -88,14 +102,27 @@ function createPreviewWindow(): HTMLElement {
 function initPreviewScene(): void {
   if (!previewState.canvas) return;
 
-  // Renderer
+  // Renderer - with iOS Safari compatibility options
   previewState.renderer = new THREE.WebGLRenderer({
     canvas: previewState.canvas,
     antialias: true,
     alpha: true,
+    preserveDrawingBuffer: true, // Required for iOS Safari
+    powerPreference: "default",  // Let system decide (avoid high-performance on mobile)
   });
-  previewState.renderer.setPixelRatio(window.devicePixelRatio);
+  previewState.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   previewState.renderer.setClearColor(0x1a1a2e, 1);
+
+  // Check WebGL context
+  const gl = previewState.renderer.getContext();
+  if (!gl) {
+    console.error("WebGL context creation failed");
+    return;
+  }
+  console.log("Preview WebGL initialized:", {
+    renderer: gl.getParameter(gl.RENDERER),
+    maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+  });
 
   // Scene
   previewState.scene = new THREE.Scene();
@@ -131,6 +158,13 @@ function initPreviewScene(): void {
 
   // Initial resize
   resizePreview();
+
+  console.log("Preview scene initialized:", {
+    hasRenderer: !!previewState.renderer,
+    hasScene: !!previewState.scene,
+    hasCamera: !!previewState.camera,
+    sceneChildren: previewState.scene.children.length,
+  });
 }
 
 /**
@@ -145,10 +179,20 @@ function resizePreview(): void {
   const width = content.clientWidth;
   const height = content.clientHeight;
 
+  // Guard against zero dimensions (can happen if container not fully laid out)
+  if (width <= 0 || height <= 0) {
+    console.warn("Preview resize: invalid dimensions", { width, height });
+    // Retry on next frame
+    requestAnimationFrame(resizePreview);
+    return;
+  }
+
   previewState.camera.aspect = width / height;
   previewState.camera.updateProjectionMatrix();
   previewState.renderer.setSize(width, height);
 }
+
+let renderDebugLogged = false;
 
 /**
  * Animation loop for the preview.
@@ -168,6 +212,18 @@ function animatePreview(): void {
   }
 
   if (previewState.renderer && previewState.scene && previewState.camera) {
+    // Log render state once for debugging
+    if (!renderDebugLogged && previewState.buildingMesh) {
+      renderDebugLogged = true;
+      const info = previewState.renderer.info;
+      console.log("Preview render state:", {
+        sceneChildren: previewState.scene.children.length,
+        hasBuildingMesh: !!previewState.buildingMesh,
+        canvasSize: `${previewState.renderer.domElement.width}x${previewState.renderer.domElement.height}`,
+        drawCalls: info.render.calls,
+        triangles: info.render.triangles,
+      });
+    }
     previewState.renderer.render(previewState.scene, previewState.camera);
   }
 }
@@ -200,11 +256,69 @@ export async function loadBuildingPreview(
 
   let foundGeometry: THREE.BufferGeometry | null = null;
 
+  console.log(`loadBuildingPreview: osmId=${osmId}, globalId=${globalId}`);
+  console.log(`  buildingMetadata available: ${!!viewerState.buildingMetadata}`);
+  console.log(`  buildingMeshes count: ${viewerState.buildingMeshes.size}`);
+  console.log(`  customMeshes count: ${viewerState.customMeshes.size}`);
+
+  // First check if there's a custom mesh for this building
+  const customMesh = viewerState.customMeshes.get(osmId);
+  let customMaterial: THREE.Material | null = null;
+
+  if (customMesh) {
+    console.log(`  Using custom mesh for building ${osmId}`);
+
+    // Clone the custom mesh geometry
+    const originalGeometry = customMesh.geometry as THREE.BufferGeometry;
+    foundGeometry = originalGeometry.clone();
+
+    // Clone the custom mesh material to preserve color/roughness/etc
+    const origMaterial = customMesh.material;
+    if (Array.isArray(origMaterial)) {
+      customMaterial = origMaterial[0]?.clone() || null;
+    } else if (origMaterial) {
+      customMaterial = origMaterial.clone();
+    }
+    if (customMaterial) {
+      console.log(`  Custom mesh material cloned:`, {
+        type: customMaterial.type,
+        color: (customMaterial as THREE.MeshStandardMaterial).color?.getHexString?.() || 'N/A',
+      });
+    }
+
+    // The custom mesh is already in world coordinates, we need to center it
+    foundGeometry.computeBoundingBox();
+    const bbox = foundGeometry.boundingBox!;
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
+
+    // Store original position for placing edited mesh back in world
+    previewState.originalCenter = center.clone();
+    previewState.originalBaseZ = bbox.min.z;
+    previewState.buildingChunkInfo = null; // No chunk info for custom meshes
+
+    // Translate geometry: center in X/Y, place base on Z=0 plane
+    const positions = foundGeometry.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < positions.count; i++) {
+      positions.setX(i, positions.getX(i) - center.x);
+      positions.setY(i, positions.getY(i) - center.y);
+      positions.setZ(i, positions.getZ(i) - bbox.min.z);
+    }
+    positions.needsUpdate = true;
+    foundGeometry.computeBoundingBox();
+    foundGeometry.computeVertexNormals();
+    foundGeometry.computeBoundingSphere();
+
+    console.log(`  Custom mesh geometry: ${foundGeometry.getAttribute("position").count} vertices`);
+  }
+
   // Search through building metadata to find the building's face range
-  if (viewerState.buildingMetadata) {
+  // (only if we don't already have geometry from a custom mesh)
+  if (!foundGeometry && viewerState.buildingMetadata) {
     for (const [chunkId, entries] of Object.entries(viewerState.buildingMetadata.chunks)) {
       for (const entry of entries) {
         if (entry.global_id === globalId) {
+          console.log(`  Found building in chunk ${chunkId}, entry:`, entry);
           // Found the building entry
           const meshList = viewerState.buildingMeshes.get(chunkId);
           if (meshList && meshList.length > 0) {
@@ -218,10 +332,16 @@ export async function loadBuildingPreview(
 
             console.log(`Extracting building ${osmId}: faces ${startFace}-${endFace} (${faceCount} faces)`);
 
+            // Store chunk info for hiding original faces later
+            previewState.buildingChunkInfo = { chunkId, startFace, endFace };
+
             const positions = geometry.getAttribute("position");
             const normals = geometry.getAttribute("normal");
             const uvs = geometry.getAttribute("uv");
             const index = geometry.index;
+
+            console.log(`  Geometry info: positions=${positions?.count}, normals=${normals?.count}, uvs=${uvs?.count}, indexed=${!!index}`);
+            console.log(`  Face range: ${startFace} to ${endFace} (${faceCount} faces)`);
 
             const newPositions: number[] = [];
             const newNormals: number[] = [];
@@ -311,9 +431,21 @@ export async function loadBuildingPreview(
               }
             }
 
+            console.log(`  Extracted: ${newPositions.length / 3} vertices`);
+
             if (foundGeometry) {
               foundGeometry.computeVertexNormals();
+              foundGeometry.computeBoundingSphere();
+
+              // Log first few vertex positions for debugging
+              const pos = foundGeometry.getAttribute("position");
+              if (pos && pos.count > 0) {
+                console.log(`  First vertex: (${pos.getX(0).toFixed(2)}, ${pos.getY(0).toFixed(2)}, ${pos.getZ(0).toFixed(2)})`);
+                console.log(`  BoundingSphere radius: ${foundGeometry.boundingSphere?.radius.toFixed(2)}`);
+              }
               console.log(`Extracted geometry: ${foundGeometry.getAttribute("position").count} vertices`);
+            } else {
+              console.warn(`  Failed to create geometry from ${newPositions.length / 3} vertices`);
             }
           }
           break;
@@ -324,32 +456,57 @@ export async function loadBuildingPreview(
   }
 
   if (foundGeometry && foundGeometry.getAttribute("position").count > 0) {
-    // Create material
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x8b7355,
-      roughness: 0.8,
-      metalness: 0.1,
-      side: THREE.DoubleSide,
-    });
+    // Use custom material if we have one (preserves color from saved GLB)
+    // Otherwise, use MeshStandardMaterial for lighting support in editor
+    let material: THREE.Material;
+    if (customMaterial) {
+      // Ensure it's double-sided for the preview
+      (customMaterial as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+      material = customMaterial;
+      console.log(`  Using custom material with color: ${(customMaterial as THREE.MeshStandardMaterial).color?.getHexString?.()}`);
+    } else {
+      material = new THREE.MeshStandardMaterial({
+        color: 0x8b7355,
+        roughness: 0.8,
+        metalness: 0.1,
+        side: THREE.DoubleSide,
+      });
+    }
+
+    // Store material for editor
+    previewState.buildingMaterial = material;
 
     // Create mesh
     const mesh = new THREE.Mesh(foundGeometry, material);
 
-    // Compute bounding box
-    foundGeometry.computeBoundingBox();
-    const bbox = foundGeometry.boundingBox!;
-    const center = new THREE.Vector3();
-    bbox.getCenter(center);
+    console.log(`  Created mesh with ${foundGeometry.getAttribute("position").count} vertices`);
 
-    // Translate geometry: center in X/Y, place base on Z=0 plane
-    const positions = foundGeometry.getAttribute("position") as THREE.BufferAttribute;
-    for (let i = 0; i < positions.count; i++) {
-      positions.setX(i, positions.getX(i) - center.x);
-      positions.setY(i, positions.getY(i) - center.y);
-      positions.setZ(i, positions.getZ(i) - bbox.min.z); // Base at Z=0
+    // Only center/transform if this is chunk geometry (not custom mesh which is already centered)
+    if (!customMesh) {
+      // Compute bounding box
+      foundGeometry.computeBoundingBox();
+      const bbox = foundGeometry.boundingBox!;
+      const center = new THREE.Vector3();
+      bbox.getCenter(center);
+
+      // Store original position for placing edited mesh back in world
+      previewState.originalCenter = center.clone();
+      previewState.originalBaseZ = bbox.min.z;
+
+      // Translate geometry: center in X/Y, place base on Z=0 plane
+      const positions = foundGeometry.getAttribute("position") as THREE.BufferAttribute;
+      for (let i = 0; i < positions.count; i++) {
+        positions.setX(i, positions.getX(i) - center.x);
+        positions.setY(i, positions.getY(i) - center.y);
+        positions.setZ(i, positions.getZ(i) - bbox.min.z); // Base at Z=0
+      }
+      positions.needsUpdate = true;
+      foundGeometry.computeBoundingBox();
+      foundGeometry.computeBoundingSphere(); // Critical: update bounding sphere for frustum culling
     }
-    positions.needsUpdate = true;
-    foundGeometry.computeBoundingBox();
+
+    // Disable frustum culling to ensure mesh is always rendered
+    mesh.frustumCulled = false;
 
     // Add wireframe overlay
     const wireframeMaterial = new THREE.MeshBasicMaterial({
@@ -359,6 +516,7 @@ export async function loadBuildingPreview(
       opacity: 0.15,
     });
     const wireframe = new THREE.Mesh(foundGeometry, wireframeMaterial);
+    wireframe.frustumCulled = false;
 
     // Group mesh and wireframe
     const group = new THREE.Group();
@@ -367,6 +525,16 @@ export async function loadBuildingPreview(
 
     previewState.buildingMesh = group;
     previewState.scene.add(group);
+
+    console.log(`  Mesh created and added to scene`);
+    console.log(`  Group children: ${group.children.length}`);
+    console.log(`  Mesh visible: ${mesh.visible}, geometry vertices: ${mesh.geometry.getAttribute("position")?.count}`);
+
+    // Debug: verify bounding box after centering
+    foundGeometry.computeBoundingBox();
+    const debugBbox = foundGeometry.boundingBox!;
+    console.log(`  After centering - BBox min: (${debugBbox.min.x.toFixed(1)}, ${debugBbox.min.y.toFixed(1)}, ${debugBbox.min.z.toFixed(1)})`);
+    console.log(`  After centering - BBox max: (${debugBbox.max.x.toFixed(1)}, ${debugBbox.max.y.toFixed(1)}, ${debugBbox.max.z.toFixed(1)})`);
 
     // Fit camera to building
     const size = new THREE.Vector3();
@@ -385,16 +553,31 @@ export async function loadBuildingPreview(
     previewState.buildingGeometry = foundGeometry;
 
     console.log(`Preview loaded: ${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}m`);
+    console.log(`  Camera at: (${previewState.camera!.position.x.toFixed(1)}, ${previewState.camera!.position.y.toFixed(1)}, ${previewState.camera!.position.z.toFixed(1)})`);
+    console.log(`  Looking at: (${previewState.controls!.target.x.toFixed(1)}, ${previewState.controls!.target.y.toFixed(1)}, ${previewState.controls!.target.z.toFixed(1)})`);
+    console.log(`  Scene children: ${previewState.scene.children.length}`);
   } else {
     console.warn("Could not extract building geometry, showing placeholder");
+    console.log(`  buildingMetadata available: ${!!viewerState.buildingMetadata}`);
+    console.log(`  globalId: ${globalId}, osmId: ${osmId}`);
+    console.log(`  customMeshes count: ${viewerState.customMeshes.size}`);
+    console.log(`  buildingMeshes chunks: ${viewerState.buildingMeshes.size}`);
 
-    // Fallback: create a placeholder box
+    // List available chunks for debugging
+    if (viewerState.buildingMetadata) {
+      const chunkIds = Object.keys(viewerState.buildingMetadata.chunks);
+      console.log(`  Available chunks: ${chunkIds.join(", ")}`);
+    }
+
+    // Fallback: create a bright placeholder box (use BasicMaterial for max visibility)
     const geometry = new THREE.BoxGeometry(10, 10, 20);
-    const material = new THREE.MeshStandardMaterial({ color: 0x8b7355 });
+    const material = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // Bright red
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.z = 10;
     previewState.buildingMesh = mesh;
     previewState.scene.add(mesh);
+
+    console.log(`  Added red placeholder box at position (0, 0, 10)`);
 
     previewState.camera!.position.set(30, 30, 30);
     previewState.controls!.target.set(0, 0, 10);
@@ -445,7 +628,8 @@ function toggleEditMode(): void {
       previewState.controls,
       previewState.buildingGeometry,
       previewState.currentOsmId,
-      content
+      content,
+      previewState.buildingMaterial // Pass the stored material
     );
 
     previewState.isEditMode = true;
@@ -566,7 +750,9 @@ function setupResizing(): void {
  * Open the preview window.
  */
 export function openPreviewWindow(viewerState: ViewerState, osmId: number, globalId: number): void {
-  if (!previewState.container) {
+  const isFirstOpen = !previewState.container;
+
+  if (isFirstOpen) {
     // Create window
     previewState.container = createPreviewWindow();
     document.getElementById("ui")?.appendChild(previewState.container);
@@ -580,22 +766,34 @@ export function openPreviewWindow(viewerState: ViewerState, osmId: number, globa
 
     setupDragging();
     setupResizing();
-
-    // Initialize Three.js
-    initPreviewScene();
   }
 
-  previewState.container.classList.remove("hidden");
+  // IMPORTANT: Show container BEFORE initializing Three.js scene
+  // This ensures the canvas has proper dimensions (not 0x0)
+  previewState.container!.classList.remove("hidden");
   previewState.isOpen = true;
 
-  // Start animation loop
-  animatePreview();
+  // Store reference to main viewer state
+  previewState.mainViewerState = viewerState;
 
-  // Load the building
-  loadBuildingPreview(viewerState, osmId, globalId);
+  // Initialize Three.js AFTER container is visible (first open only)
+  if (isFirstOpen) {
+    // Use requestAnimationFrame to ensure layout is complete
+    requestAnimationFrame(() => {
+      initPreviewScene();
+      animatePreview();
+      loadBuildingPreview(viewerState, osmId, globalId);
+    });
+  } else {
+    // Start animation loop
+    animatePreview();
 
-  // Resize after showing
-  setTimeout(resizePreview, 0);
+    // Load the building
+    loadBuildingPreview(viewerState, osmId, globalId);
+
+    // Resize after showing (use rAF for reliable timing on mobile)
+    requestAnimationFrame(resizePreview);
+  }
 }
 
 /**
@@ -630,4 +828,154 @@ export function isPreviewOpen(): boolean {
  */
 export function getPreviewOsmId(): number | null {
   return previewState.currentOsmId;
+}
+
+/**
+ * Apply the edited mesh to the main scene, replacing the procedural building.
+ * Called after saving a custom mesh.
+ */
+export function applyCustomMeshToMainScene(): boolean {
+  const state = previewState.mainViewerState;
+  const osmId = previewState.currentOsmId;
+
+  if (!state || !osmId) {
+    console.warn("Cannot apply custom mesh: missing viewer state or OSM ID");
+    return false;
+  }
+
+  // Get the edited geometry from the editor
+  const editorState = getEditorState();
+  if (!editorState.workingGeometry) {
+    console.warn("Cannot apply custom mesh: no edited geometry");
+    return false;
+  }
+
+  // Get original position info
+  const originalCenter = previewState.originalCenter;
+  const originalBaseZ = previewState.originalBaseZ;
+
+  if (!originalCenter) {
+    console.warn("Cannot apply custom mesh: missing original position");
+    return false;
+  }
+
+  // Clone the edited geometry
+  const customGeometry = editorState.workingGeometry.clone();
+
+  // Transform back to world coordinates
+  const positions = customGeometry.getAttribute("position") as THREE.BufferAttribute;
+  for (let i = 0; i < positions.count; i++) {
+    positions.setX(i, positions.getX(i) + originalCenter.x);
+    positions.setY(i, positions.getY(i) + originalCenter.y);
+    positions.setZ(i, positions.getZ(i) + originalBaseZ);
+  }
+  positions.needsUpdate = true;
+  customGeometry.computeBoundingBox();
+  customGeometry.computeBoundingSphere();
+  customGeometry.computeVertexNormals();
+
+  // Get material from editor or create new one
+  const editorMaterial = editorState.workingMesh?.material as THREE.MeshStandardMaterial | undefined;
+  const customMaterial = editorMaterial
+    ? editorMaterial.clone()
+    : new THREE.MeshStandardMaterial({
+        color: 0x8b7355,
+        roughness: 0.8,
+        metalness: 0.1,
+        side: THREE.DoubleSide,
+      });
+
+  // Create the custom mesh
+  const customMesh = new THREE.Mesh(customGeometry, customMaterial);
+  customMesh.name = `custom_building_${osmId}`;
+  customMesh.userData.osmId = osmId;
+  customMesh.userData.isCustomMesh = true;
+  customMesh.castShadow = true;
+  customMesh.receiveShadow = true;
+
+  // Remove any existing custom mesh for this building
+  const existingMesh = state.customMeshes.get(osmId);
+  if (existingMesh) {
+    state.scene.remove(existingMesh);
+    existingMesh.geometry.dispose();
+    if (Array.isArray(existingMesh.material)) {
+      existingMesh.material.forEach(m => m.dispose());
+    } else if (existingMesh.material instanceof THREE.Material) {
+      existingMesh.material.dispose();
+    }
+  }
+
+  // Add to scene and track
+  state.scene.add(customMesh);
+  state.customMeshes.set(osmId, customMesh);
+
+  // Hide original building faces in the chunk mesh
+  hideOriginalBuildingFaces(state, osmId);
+
+  console.log(`Applied custom mesh for building ${osmId} to main scene`);
+  return true;
+}
+
+/**
+ * Hide the original building faces in the chunk mesh by moving them to a degenerate position.
+ */
+function hideOriginalBuildingFaces(state: ViewerState, osmId: number): void {
+  const chunkInfo = previewState.buildingChunkInfo;
+  if (!chunkInfo) {
+    console.warn("No chunk info available for hiding original faces");
+    return;
+  }
+
+  const { chunkId, startFace, endFace } = chunkInfo;
+  const meshList = state.buildingMeshes.get(chunkId);
+
+  if (!meshList || meshList.length === 0) {
+    console.warn(`Chunk ${chunkId} not found in building meshes`);
+    return;
+  }
+
+  const chunkMesh = meshList[0];
+  const geometry = chunkMesh.geometry as THREE.BufferGeometry;
+  const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const index = geometry.index;
+
+  // Store the hiding info for potential restoration
+  state.hiddenBuildingFaces.set(osmId, chunkInfo);
+
+  if (index) {
+    // Indexed geometry: move vertices to 0,0,0 (degenerate triangles)
+    const verticesToHide = new Set<number>();
+    for (let f = startFace; f < endFace; f++) {
+      for (let v = 0; v < 3; v++) {
+        verticesToHide.add(index.getX(f * 3 + v));
+      }
+    }
+
+    // Note: This is destructive - ideally we'd store original positions
+    // For now, we just move them far away (below terrain)
+    for (const vertexIndex of verticesToHide) {
+      positions.setZ(vertexIndex, -10000);
+    }
+  } else {
+    // Non-indexed geometry
+    const startVertex = startFace * 3;
+    const endVertex = endFace * 3;
+    for (let i = startVertex; i < endVertex; i++) {
+      positions.setZ(i, -10000);
+    }
+  }
+
+  positions.needsUpdate = true;
+  console.log(`Hidden ${endFace - startFace} faces for building ${osmId} in chunk ${chunkId}`);
+}
+
+/**
+ * Get the original building position for external use.
+ */
+export function getOriginalBuildingPosition(): { center: THREE.Vector3; baseZ: number } | null {
+  if (!previewState.originalCenter) return null;
+  return {
+    center: previewState.originalCenter.clone(),
+    baseZ: previewState.originalBaseZ,
+  };
 }

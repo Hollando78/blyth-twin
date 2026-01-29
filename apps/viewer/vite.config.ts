@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { resolve } from "path";
 import viteCompression from "vite-plugin-compression";
 
 export default defineConfig({
@@ -7,6 +8,12 @@ export default defineConfig({
   build: {
     outDir: "../../dist/viewer",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        viewer: resolve(__dirname, "viewer.html"),
+      },
+    },
   },
   plugins: [
     // Gzip compression for production builds

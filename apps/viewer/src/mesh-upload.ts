@@ -7,6 +7,7 @@
 
 import { uploadMesh, deleteMesh, getMeshMetadata } from "./api-client.ts";
 import { getEditState, subscribeToEditState } from "./edit-mode.ts";
+import { loadAndApplyCustomMesh } from "./asset-loader.ts";
 
 let dropZoneElement: HTMLElement | null = null;
 let unsubscribe: (() => void) | null = null;
@@ -112,11 +113,17 @@ async function uploadFile(file: File): Promise<void> {
   try {
     const result = await uploadMesh(state.selectedOsmId, file, "user_upload");
 
-    // Hide progress, show success
+    // Hide progress
     if (progressEl) progressEl.classList.add("hidden");
 
-    // Update mesh status
+    // Update mesh status UI
     updateMeshStatus(state.selectedOsmId);
+
+    // Load and apply the custom mesh to the main scene
+    const applied = await loadAndApplyCustomMesh(state.selectedOsmId);
+    if (applied) {
+      console.log("Custom mesh applied to scene");
+    }
 
     console.log("Mesh uploaded:", result);
   } catch (error) {

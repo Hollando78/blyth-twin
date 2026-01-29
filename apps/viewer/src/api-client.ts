@@ -16,7 +16,7 @@ declare global {
 }
 
 // API configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 const API_KEY = import.meta.env.VITE_API_KEY || "dev-api-key";
 
 export interface BuildingProperties {
@@ -240,5 +240,53 @@ export async function checkApiHealth(): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * List buildings that have custom meshes.
+ */
+export async function listBuildingsWithCustomMeshes(): Promise<number[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/meshes`, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": API_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      console.warn("Failed to fetch custom meshes list");
+      return [];
+    }
+
+    const data = await response.json();
+    return data.osm_ids || [];
+  } catch (error) {
+    console.warn("Error fetching custom meshes list:", error);
+    return [];
+  }
+}
+
+/**
+ * Download a custom mesh GLB as ArrayBuffer.
+ */
+export async function downloadMeshGLB(osmId: number): Promise<ArrayBuffer | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/buildings/${osmId}/mesh/download`, {
+      headers: {
+        "X-API-Key": API_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`Failed to download mesh for building ${osmId}`);
+      return null;
+    }
+
+    return response.arrayBuffer();
+  } catch (error) {
+    console.warn(`Error downloading mesh for building ${osmId}:`, error);
+    return null;
   }
 }

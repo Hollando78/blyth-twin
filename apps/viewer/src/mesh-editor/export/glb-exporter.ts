@@ -13,6 +13,7 @@ import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 
 import { getEditorState, markClean } from "../editor-state.ts";
 import { uploadMesh } from "../../api-client.ts";
+import { applyCustomMeshToMainScene } from "../../mesh-preview.ts";
 
 /**
  * Export options for GLB.
@@ -77,14 +78,25 @@ export async function exportEditorMeshToBlob(): Promise<Blob | null> {
   }
 
   // Create a mesh with the current geometry and material
-  const material = state.workingMesh?.material as THREE.Material | undefined;
-  const exportMaterial =
-    material ||
-    new THREE.MeshStandardMaterial({
+  const material = state.workingMesh?.material as THREE.MeshStandardMaterial | undefined;
+
+  // Clone the material to ensure we capture current state
+  let exportMaterial: THREE.MeshStandardMaterial;
+  if (material && material instanceof THREE.MeshStandardMaterial) {
+    exportMaterial = material.clone();
+    console.log("Exporting with material:", {
+      color: exportMaterial.color.getHexString(),
+      roughness: exportMaterial.roughness,
+      metalness: exportMaterial.metalness,
+    });
+  } else {
+    exportMaterial = new THREE.MeshStandardMaterial({
       color: 0x8b7355,
       roughness: 0.8,
       metalness: 0.1,
     });
+    console.log("No material found, using default");
+  }
 
   const exportMesh = new THREE.Mesh(state.workingGeometry.clone(), exportMaterial);
 
@@ -147,6 +159,12 @@ export async function saveToAPI(): Promise<{ success: boolean; message: string }
 
     // Mark as clean (no unsaved changes)
     markClean();
+
+    // Apply custom mesh to main scene for immediate visual feedback
+    const applied = applyCustomMeshToMainScene();
+    if (applied) {
+      console.log("Custom mesh applied to main scene");
+    }
 
     return {
       success: true,

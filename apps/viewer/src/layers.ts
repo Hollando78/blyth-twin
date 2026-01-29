@@ -151,6 +151,18 @@ export function updateLOD(state: ViewerState) {
     const distance = camPos.distanceTo(chunkCenter);
     loadedAsset.mesh.visible = distance < cullDistance;
   }
+
+  // Also handle custom meshes (user edits)
+  // Use cached bounding box (computed during mesh loading) for performance
+  for (const [, mesh] of state.customMeshes.entries()) {
+    const bbox = mesh.geometry.boundingBox;
+    if (bbox) {
+      const center = new THREE.Vector3();
+      bbox.getCenter(center);
+      const distance = camPos.distanceTo(new THREE.Vector2(center.x, center.y));
+      mesh.visible = distance < cullDistance;
+    }
+  }
 }
 
 /**

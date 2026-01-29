@@ -37,19 +37,40 @@ import { downloadAsGLB, saveToAPI } from "./export/glb-exporter.ts";
 let editorUIElement: HTMLElement | null = null;
 let unsubscribe: (() => void) | null = null;
 
-// Keyboard shortcut map
+/**
+ * Toggle select all - if anything selected, deselect all; otherwise select all.
+ */
+function toggleSelectAll(): void {
+  const state = getEditorState();
+  if (state.selectedVertices.size > 0 || state.selectedFaces.size > 0) {
+    clearSelection();
+  } else {
+    selectAll();
+  }
+  updateSelectionVisualization();
+}
+
+// Keyboard shortcut map - Blender-like controls
 const SHORTCUTS: Record<string, () => void> = {
-  q: () => selectTool("select"),
-  w: () => selectTool("move"),
-  e: () => selectTool("rotate"),
-  r: () => selectTool("scale"),
-  t: () => selectTool("extrude"),
-  a: () => selectAll(),
-  Escape: () => clearSelection(),
-  Delete: () => handleDelete(),
-  z: () => handleUndo(),
-  y: () => handleRedo(),
-  s: () => handleSave(),
+  // Transform tools (Blender-style)
+  g: () => selectTool("move"),      // G = Grab/Move
+  r: () => selectTool("rotate"),    // R = Rotate
+  s: () => selectTool("scale"),     // S = Scale
+  e: () => selectTool("extrude"),   // E = Extrude
+
+  // Selection
+  a: () => toggleSelectAll(),       // A = Toggle select all
+  Escape: () => {                   // Escape = Cancel/deselect
+    clearSelection();
+    selectTool("select");           // Return to select tool
+  },
+  Delete: () => handleDelete(),     // Delete = Delete selected
+  x: () => handleDelete(),          // X = Delete (Blender alt)
+
+  // Selection modes (1/2/3 like Blender)
+  "1": () => { setSelectionMode("vertex"); updateModeButtons(); },
+  "2": () => { setSelectionMode("face"); updateModeButtons(); },
+  "3": () => { setSelectionMode("object"); updateModeButtons(); },
 };
 
 /**
@@ -64,27 +85,27 @@ function createEditorUI(): HTMLElement {
       <div class="toolbar-section">
         <span class="toolbar-label">Tools</span>
         <div class="toolbar-buttons">
-          <button id="tool-select" class="tool-btn active" title="Select (Q)">
+          <button id="tool-select" class="tool-btn active" title="Select (Esc to return)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M2 2l5 12 2-4 4-2L2 2z"/>
             </svg>
           </button>
-          <button id="tool-move" class="tool-btn" title="Move (W)">
+          <button id="tool-move" class="tool-btn" title="Grab/Move (G)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 1l3 3H9v3h3V5l3 3-3 3v-2H9v3h2l-3 3-3-3h2V9H4v2l-3-3 3-3v2h3V4H5l3-3z"/>
             </svg>
           </button>
-          <button id="tool-rotate" class="tool-btn" title="Rotate (E)">
+          <button id="tool-rotate" class="tool-btn" title="Rotate (R)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 1a7 7 0 106.32 4H12a5 5 0 11-4-3V0l4 2.5L8 5V1z"/>
             </svg>
           </button>
-          <button id="tool-scale" class="tool-btn" title="Scale (R)">
+          <button id="tool-scale" class="tool-btn" title="Scale (S)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M1 1h5v2H3v3H1V1zm14 0v5h-2V3h-3V1h5zM1 15v-5h2v3h3v2H1zm14 0h-5v-2h3v-3h2v5z"/>
             </svg>
           </button>
-          <button id="tool-extrude" class="tool-btn" title="Extrude (T)">
+          <button id="tool-extrude" class="tool-btn" title="Extrude (E)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 0l6 4v8l-6 4-6-4V4l6-4zm0 2L4 4.5V11l4 2.5 4-2.5V4.5L8 2z"/>
             </svg>
@@ -97,9 +118,9 @@ function createEditorUI(): HTMLElement {
       <div class="toolbar-section">
         <span class="toolbar-label">Mode</span>
         <div class="toolbar-buttons mode-buttons">
-          <button id="mode-vertex" class="mode-btn active" title="Vertex">V</button>
-          <button id="mode-face" class="mode-btn" title="Face">F</button>
-          <button id="mode-object" class="mode-btn" title="Object">O</button>
+          <button id="mode-vertex" class="mode-btn active" title="Vertex mode (1)">V</button>
+          <button id="mode-face" class="mode-btn" title="Face mode (2)">F</button>
+          <button id="mode-object" class="mode-btn" title="Object mode (3)">O</button>
         </div>
       </div>
 
@@ -113,7 +134,7 @@ function createEditorUI(): HTMLElement {
               <path d="M4 8l4-4v3h4a4 4 0 010 8H7v-2h5a2 2 0 000-4H8v3L4 8z"/>
             </svg>
           </button>
-          <button id="btn-redo" class="tool-btn" title="Redo (Ctrl+Y)">
+          <button id="btn-redo" class="tool-btn" title="Redo (Ctrl+Shift+Z)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M12 8l-4-4v3H4a4 4 0 000 8h5v-2H4a2 2 0 010-4h4v3l4-4z"/>
             </svg>
@@ -127,7 +148,7 @@ function createEditorUI(): HTMLElement {
         <span class="toolbar-label">Geometry</span>
         <div class="toolbar-buttons">
           <button id="btn-flip-normals" class="tool-btn" title="Flip Normals">↻</button>
-          <button id="btn-delete" class="tool-btn" title="Delete (Del)">✕</button>
+          <button id="btn-delete" class="tool-btn" title="Delete (X or Del)">✕</button>
         </div>
       </div>
 

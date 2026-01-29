@@ -35,6 +35,12 @@ const DTM_BOUNDS_WGS84 = {
 const textureCache: Map<string, THREE.Texture> = new Map();
 const textureLoader = new THREE.TextureLoader();
 
+// Mobile detection
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+// Tile loading timeout (ms)
+const TILE_LOAD_TIMEOUT = isMobile ? 8000 : 15000;
+
 /**
  * Convert lat/lon to tile coordinates
  */
@@ -172,12 +178,22 @@ export async function loadTerrainTextureGrid(zoom: number = 16): Promise<THREE.C
       const promise = new Promise<void>((resolve) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
+
+        // Timeout for slow/failed tile loads
+        const timeout = setTimeout(() => {
+          failCount++;
+          console.warn(`Tile ${tx},${ty} timed out after ${TILE_LOAD_TIMEOUT}ms`);
+          resolve();
+        }, TILE_LOAD_TIMEOUT);
+
         img.onload = () => {
+          clearTimeout(timeout);
           ctx.drawImage(img, canvasX, canvasY, TILE_SIZE, TILE_SIZE);
           successCount++;
           resolve();
         };
         img.onerror = (err) => {
+          clearTimeout(timeout);
           failCount++;
           console.warn(`Failed to load tile ${tx},${ty} from ${url}`, err);
           resolve(); // Continue even if tile fails
@@ -364,8 +380,11 @@ function generateProceduralTerrainTexture(): THREE.CanvasTexture {
  */
 export async function createTerrainMaterial(): Promise<THREE.MeshBasicMaterial> {
   try {
-    // Use zoom 16 for good detail (zoom 17 may not be available in all areas)
-    const texture = await loadTerrainTextureGrid(16);
+    // Use lower zoom on mobile to reduce memory usage and load time
+    // Zoom 16 = ~2.4m/pixel, Zoom 15 = ~4.8m/pixel, Zoom 14 = ~9.6m/pixel
+    const zoom = isMobile ? 15 : 16;
+    console.log(`Loading terrain at zoom ${zoom} (mobile: ${isMobile})`);
+    const texture = await loadTerrainTextureGrid(zoom);
 
     // Use MeshBasicMaterial - doesn't depend on lighting/normals
     // This ensures consistent rendering across mobile and desktop

@@ -57,6 +57,22 @@ export function findBuildingByGlobalId(state: ViewerState, globalId: number): Bu
 }
 
 /**
+ * Find building entry by OSM ID (searches all chunks)
+ */
+export function findBuildingEntryByOsmId(state: ViewerState, osmId: number): BuildingFaceMapEntry | null {
+  if (!state.buildingMetadata) return null;
+
+  for (const entries of Object.values(state.buildingMetadata.chunks)) {
+    for (const entry of entries) {
+      if (entry.osm_id === osmId) {
+        return entry;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Find building ID from face index in footprint metadata (binary search)
  */
 export function findBuildingFromFace(state: ViewerState, chunkId: string, faceIndex: number): number | null {
@@ -140,11 +156,15 @@ export function onPointerMove(state: ViewerState, event: PointerEvent) {
   state.pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   state.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-  // Raycast against 3D building meshes
+  // Raycast against 3D building meshes AND custom meshes
   state.raycaster.setFromCamera(state.pointer, state.camera);
   const allBuildingMeshes: THREE.Mesh[] = [];
   for (const meshList of state.buildingMeshes.values()) {
     allBuildingMeshes.push(...meshList);
+  }
+  // Include custom meshes in raycasting
+  for (const customMesh of state.customMeshes.values()) {
+    allBuildingMeshes.push(customMesh);
   }
   const intersects = state.raycaster.intersectObjects(allBuildingMeshes, false);
 
@@ -152,6 +172,13 @@ export function onPointerMove(state: ViewerState, event: PointerEvent) {
     const intersection = intersects[0];
     const faceIndex = intersection.faceIndex;
     const hitMesh = intersection.object as THREE.Mesh;
+
+    // Check if it's a custom mesh
+    if (hitMesh.userData.isCustomMesh) {
+      // Custom meshes don't use the shader hover system
+      document.body.style.cursor = "pointer";
+      return;
+    }
 
     // Find chunk ID
     let hitChunkId: string | null = null;
@@ -184,11 +211,15 @@ export function onClick(state: ViewerState, event: MouseEvent) {
   state.pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   state.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-  // Raycast against 3D building meshes
+  // Raycast against 3D building meshes AND custom meshes
   state.raycaster.setFromCamera(state.pointer, state.camera);
   const allBuildingMeshes: THREE.Mesh[] = [];
   for (const meshList of state.buildingMeshes.values()) {
     allBuildingMeshes.push(...meshList);
+  }
+  // Include custom meshes in raycasting
+  for (const customMesh of state.customMeshes.values()) {
+    allBuildingMeshes.push(customMesh);
   }
   const intersects = state.raycaster.intersectObjects(allBuildingMeshes, false);
 
@@ -196,6 +227,22 @@ export function onClick(state: ViewerState, event: MouseEvent) {
     const intersection = intersects[0];
     const faceIndex = intersection.faceIndex;
     const hitMesh = intersection.object as THREE.Mesh;
+
+    // Check if it's a custom mesh
+    if (hitMesh.userData.isCustomMesh) {
+      const osmId = hitMesh.userData.osmId as number;
+      const props = getBuildingPropertiesByOsmId(state, osmId);
+
+      // Find the global ID for this building (for shader highlight)
+      const entry = findBuildingEntryByOsmId(state, osmId);
+      const globalId = entry?.global_id ?? -1;
+
+      state.selectedBuildingIndex = globalId;
+      state.buildingShaderUniforms.selectedBuildingId.value = globalId;
+
+      showBuildingInfo(props, osmId);
+      return;
+    }
 
     // Find chunk ID for metadata lookup
     let hitChunkId: string | null = null;
@@ -336,4 +383,43 @@ export function hideBuildingInfo() {
 
   // Clear tracked building
   currentDisplayedBuilding = { osmId: null, props: null };
+}
+
+// Store viewer state reference for cache updates
+let viewerStateRef: ViewerState | null = null;
+
+/**
+ * Set the viewer state reference for cache updates.
+ */
+export function setViewerStateRef(state: ViewerState): void {
+  viewerStateRef = state;
+}
+
+/**
+ * Update building properties in the local cache and refresh the info panel.
+ * Called after saving edits via the API.
+ */
+export function updateBuildingPropertiesCache(osmId: number, newProps: Partial<BuildingProperties>): void {
+  if (!viewerStateRef?.footprintMetadata) {
+    console.warn("Cannot update cache: no viewer state or metadata");
+    return;
+  }
+
+  // Find and update the building in the metadata cache
+  for (const [_buildingId, props] of Object.entries(viewerStateRef.footprintMetadata.buildings)) {
+    if (props.osm_id === osmId) {
+      // Update the cached properties
+      Object.assign(props, newProps);
+      console.log(`Updated cache for building ${osmId}:`, newProps);
+
+      // If this is the currently displayed building, refresh the info panel
+      if (currentDisplayedBuilding.osmId === osmId) {
+        currentDisplayedBuilding.props = props;
+        showBuildingInfo(props, osmId);
+      }
+      return;
+    }
+  }
+
+  console.warn(`Building ${osmId} not found in local cache`);
 }

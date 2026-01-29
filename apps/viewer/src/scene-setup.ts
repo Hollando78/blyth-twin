@@ -59,8 +59,11 @@ export function setupLighting(state: ViewerState) {
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
   sunLight.position.set(1000, -1000, 3000);
   sunLight.castShadow = true;
-  sunLight.shadow.mapSize.width = 2048;
-  sunLight.shadow.mapSize.height = 2048;
+  // Use smaller shadow maps on mobile for performance
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const shadowMapSize = isMobile ? 1024 : 2048;
+  sunLight.shadow.mapSize.width = shadowMapSize;
+  sunLight.shadow.mapSize.height = shadowMapSize;
   sunLight.shadow.camera.near = 100;
   sunLight.shadow.camera.far = 6000;
   sunLight.shadow.camera.left = -3000;

@@ -19,6 +19,7 @@ import {
   setEditingBuilding,
 } from "./edit-mode.ts";
 import { updateBuilding, deleteOverride, getBuilding } from "./api-client.ts";
+import { updateBuildingPropertiesCache } from "./selection.ts";
 
 // Editable fields configuration
 const EDITABLE_FIELDS: Array<{
@@ -201,7 +202,11 @@ async function handleSave(event: Event): Promise<void> {
 
     // Fetch updated data
     const updated = await getBuilding(state.selectedOsmId);
-    saveComplete(updated.properties as unknown as BuildingProperties);
+    const updatedProps = updated.properties as unknown as BuildingProperties;
+    saveComplete(updatedProps);
+
+    // Update local cache and refresh info panel
+    updateBuildingPropertiesCache(state.selectedOsmId, updatedProps);
 
     // Clear edit note
     if (noteInput) noteInput.value = "";
@@ -249,7 +254,12 @@ async function handleRevert(): Promise<void> {
 
     // Fetch original data
     const updated = await getBuilding(state.selectedOsmId);
-    saveComplete(updated.properties as unknown as BuildingProperties);
+    const updatedProps = updated.properties as unknown as BuildingProperties;
+    saveComplete(updatedProps);
+
+    // Update local cache and refresh info panel
+    updateBuildingPropertiesCache(state.selectedOsmId, updatedProps);
+
     renderFields();
   } catch (error) {
     saveFailed(error instanceof Error ? error.message : "Revert failed");

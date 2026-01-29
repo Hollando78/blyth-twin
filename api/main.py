@@ -49,6 +49,19 @@ app.include_router(meshes.router, prefix="/api/buildings", tags=["meshes"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
 
 
+@app.get("/api/meshes", tags=["meshes"])
+async def list_custom_meshes():
+    """List all OSM IDs that have custom meshes."""
+    from .db import get_db, get_cursor
+
+    with get_db() as conn:
+        cur = get_cursor(conn)
+        cur.execute("SELECT osm_id FROM building_meshes ORDER BY osm_id")
+        rows = cur.fetchall()
+        cur.close()
+        return {"osm_ids": [row['osm_id'] for row in rows]}
+
+
 @app.get("/")
 async def root():
     """API root endpoint."""
@@ -66,13 +79,12 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    from .db import get_connection
+    from .db import get_db, get_cursor
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        cur.close()
-        conn.close()
+        with get_db() as conn:
+            cur = get_cursor(conn)
+            cur.execute("SELECT 1")
+            cur.close()
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         return {"status": "unhealthy", "database": str(e)}

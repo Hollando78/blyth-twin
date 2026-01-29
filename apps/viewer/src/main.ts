@@ -25,8 +25,10 @@ import {
   loadBuildingMetadata,
   loadAllAssets,
   updateWaterAnimation,
+  loadCustomMeshes,
+  loadTerrainTextureDeferred,
 } from "./asset-loader.ts";
-import { onPointerMove, onClick, hideBuildingInfo, getCurrentBuilding } from "./selection.ts";
+import { onPointerMove, onClick, hideBuildingInfo, getCurrentBuilding, setViewerStateRef } from "./selection.ts";
 import { setupLayerMenu, updateLOD } from "./layers.ts";
 import { toggleEditMode, isEditModeEnabled, subscribeToEditState } from "./edit-mode.ts";
 import { initEditPanel, showEditPanel, hideEditPanel } from "./edit-panel.ts";
@@ -53,15 +55,29 @@ async function init() {
 
   // Load textures, manifest and assets
   try {
-    await initializeTextures(state);
-    await loadManifest(state);
-    await loadFootprintMetadata(state);
-    await loadBuildingMetadata(state);
+    // Parallelize independent initialization tasks
+    await Promise.all([
+      initializeTextures(state),
+      loadManifest(state),
+      loadFootprintMetadata(state),
+      loadBuildingMetadata(state),
+    ]);
+
+    // Set viewer state reference for cache updates from edit panel
+    setViewerStateRef(state);
+
     if (state.manifest) {
       state.totalAssets = state.manifest.assets.length;
       await loadAllAssets(state, progressEl);
     }
+
+    // Load custom meshes from API (replaces procedural buildings with user edits)
+    await loadCustomMeshes(state);
+
     if (loadingEl) loadingEl.classList.add("hidden");
+
+    // Load terrain satellite imagery in background (non-blocking for faster startup)
+    loadTerrainTextureDeferred(state).catch(console.warn);
   } catch (error) {
     console.error("Failed to load assets:", error);
     if (loadingEl) loadingEl.textContent = "Failed to load assets. Check console for details.";

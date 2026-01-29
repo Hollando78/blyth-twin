@@ -83,6 +83,10 @@ export interface ViewerState {
   buildingOriginalMaterials: Map<string, THREE.Material | THREE.Material[]>;
   buildingZoneMaterials: Map<string, THREE.MeshBasicMaterial>;
   buildingNullMaterial: THREE.MeshBasicMaterial;
+
+  // Custom meshes (user-edited buildings)
+  customMeshes: Map<number, THREE.Mesh>; // osm_id -> mesh
+  hiddenBuildingFaces: Map<number, { chunkId: string; startFace: number; endFace: number }>;
 }
 
 export function createViewerState(): ViewerState {
@@ -156,6 +160,9 @@ export function createViewerState(): ViewerState {
     buildingOriginalMaterials: new Map(),
     buildingZoneMaterials: new Map(),
     buildingNullMaterial: new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide }),
+
+    customMeshes: new Map(),
+    hiddenBuildingFaces: new Map(),
   };
 }
 
