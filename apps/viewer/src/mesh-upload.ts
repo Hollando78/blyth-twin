@@ -5,9 +5,9 @@
  * to replace procedurally generated building meshes.
  */
 
-import { uploadMesh, deleteMesh, getMeshMetadata } from "./api-client.ts";
+import { deleteMesh, getMeshMetadata } from "./api-client.ts";
 import { getEditState, subscribeToEditState } from "./edit-mode.ts";
-import { loadAndApplyCustomMesh } from "./asset-loader.ts";
+import { openUploadPreview } from "./mesh-upload-preview.ts";
 
 let dropZoneElement: HTMLElement | null = null;
 let unsubscribe: (() => void) | null = null;
@@ -37,7 +37,7 @@ function createMeshUploadUI(): HTMLElement {
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
         <p>Drag & drop GLB file here</p>
-        <p class="dropzone-hint">or click to browse</p>
+        <p class="dropzone-hint">or click to browse (preview & adjust before upload)</p>
         <input type="file" id="mesh-file-input" accept=".glb" hidden />
       </div>
     </div>
@@ -85,7 +85,7 @@ async function handleFileSelect(event: Event): Promise<void> {
 }
 
 /**
- * Upload a GLB file.
+ * Upload a GLB file - opens preview window for adjustments before upload.
  */
 async function uploadFile(file: File): Promise<void> {
   const state = getEditState();
@@ -104,32 +104,18 @@ async function uploadFile(file: File): Promise<void> {
     return;
   }
 
-  // Show progress
-  const progressEl = document.getElementById("mesh-upload-progress");
+  // Clear any previous error
   const errorEl = document.getElementById("mesh-upload-error");
-  if (progressEl) progressEl.classList.remove("hidden");
   if (errorEl) errorEl.classList.add("hidden");
 
-  try {
-    const result = await uploadMesh(state.selectedOsmId, file, "user_upload");
-
-    // Hide progress
-    if (progressEl) progressEl.classList.add("hidden");
-
-    // Update mesh status UI
-    updateMeshStatus(state.selectedOsmId);
-
-    // Load and apply the custom mesh to the main scene
-    const applied = await loadAndApplyCustomMesh(state.selectedOsmId);
-    if (applied) {
-      console.log("Custom mesh applied to scene");
+  // Open preview window for rotation/scale adjustment before upload
+  openUploadPreview(file, (success) => {
+    if (success && state.selectedOsmId) {
+      // Update mesh status UI after successful upload
+      updateMeshStatus(state.selectedOsmId);
+      console.log("Mesh uploaded with adjustments");
     }
-
-    console.log("Mesh uploaded:", result);
-  } catch (error) {
-    if (progressEl) progressEl.classList.add("hidden");
-    showError(error instanceof Error ? error.message : "Upload failed");
-  }
+  });
 }
 
 /**

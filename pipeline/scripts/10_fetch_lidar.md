@@ -1,6 +1,23 @@
 # LiDAR Data Acquisition Guide
 
-This is a **human-assisted** step. The Environment Agency LiDAR data must be downloaded manually.
+## Automated Download (Recommended)
+
+Run the automated download script:
+
+```bash
+cd pipeline
+make fetch_lidar
+# Or directly:
+python scripts/10_fetch_lidar.py --headless
+```
+
+This uses Selenium to automate the Environment Agency portal. Requires Chrome/Chromium.
+
+---
+
+## Manual Download (Fallback)
+
+If automated download fails, the Environment Agency LiDAR data can be downloaded manually.
 
 ## Data Source
 

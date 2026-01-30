@@ -23,7 +23,7 @@ import { getSharedRoadMaterial, preloadRoadTextures } from "./textures/roads";
 import { createRailwayMaterial, preloadRailwayTextures } from "./textures/railways";
 import { createSimpleWaterMaterial, createSimpleSeaMaterial } from "./textures/water";
 import { createBuildingMaterial } from "./textures/buildings";
-import { createTerrainMaterial } from "./textures/terrain";
+import { createTerrainMaterial, setTerrainBounds } from "./textures/terrain";
 
 // Cached viewer state reference for use by loadAndApplyCustomMesh
 let cachedViewerState: ViewerState | null = null;
@@ -176,6 +176,19 @@ export async function loadAllAssets(state: ViewerState, progressEl: HTMLElement 
   cachedViewerState = state;
 
   if (!state.manifest) return;
+
+  // Set terrain bounds from manifest AOI (including buffer for DEM extent)
+  if (state.manifest.aoi) {
+    const aoi = state.manifest.aoi;
+    const [centreLon, centreLat] = aoi.centre_wgs84;
+    const buffer = aoi.buffer_m || 0;
+    const totalSize = aoi.side_length_m + buffer;  // DEM includes buffer
+    setTerrainBounds(centreLat, centreLon, totalSize);
+
+    // Recreate terrain material with correct bounds for this twin
+    console.log("Loading terrain material for twin AOI...");
+    state.terrainMaterial = await createTerrainMaterial();
+  }
 
   const layerOrder: Record<string, number> = {
     terrain: 0,
@@ -537,6 +550,12 @@ export function updateWaterAnimation(state: ViewerState, deltaTime: number) {
  * This fetches user-edited building meshes and displays them instead of the procedural ones.
  */
 export async function loadCustomMeshes(state: ViewerState): Promise<void> {
+  // Skip custom mesh loading for dynamic twins (custom meshes are only for the default Blyth twin)
+  if (CONFIG.twinId) {
+    console.log("Viewing dynamic twin - skipping custom mesh loading");
+    return;
+  }
+
   // Check if API is available
   const apiAvailable = await checkApiHealth();
   if (!apiAvailable) {

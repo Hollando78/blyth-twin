@@ -21,10 +21,13 @@ Output:
 
 Usage:
     python 51_export_buildings.py
+    python 51_export_buildings.py --twin-id <uuid>
 """
 
+import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import psycopg2
@@ -35,8 +38,22 @@ SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
 
+# Module-level paths
+_processed_dir = PROCESSED_DIR
+
 # Coordinate transformer (BNG to WGS84)
 BNG_TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
+
+
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _processed_dir
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _processed_dir = config.processed_dir
+    config.ensure_directories()
+    return config
 
 
 def get_connection():
@@ -252,7 +269,7 @@ def export_buildings(conn, output_path: Path):
     }
 
     # Write output
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    _processed_dir.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w') as f:
         json.dump(geojson, f)
 
@@ -298,15 +315,19 @@ def print_stats(conn):
     cur.close()
 
 
-def main():
+def main(twin_id: str = None):
     """Export buildings from PostGIS to GeoJSON."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     print("=" * 50)
     print("EXPORTING BUILDINGS FROM POSTGIS")
     print("=" * 50)
     print()
 
     conn = get_connection()
-    output_path = PROCESSED_DIR / "buildings_height.geojson"
+    output_path = _processed_dir / "buildings_height.geojson"
 
     # Check buildings exist
     cur = conn.cursor()
@@ -330,4 +351,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Export buildings to GeoJSON")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

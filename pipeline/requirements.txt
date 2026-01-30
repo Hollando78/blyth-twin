@@ -19,10 +19,17 @@ pygltflib>=1.16.0
 requests>=2.31.0
 httpx>=0.25.0
 
+# Browser automation (for LiDAR download)
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
 # Utilities
 tqdm>=4.66.0
 pyyaml>=6.0.0
 click>=8.1.0
+
+# Database
+psycopg2-binary>=2.9.0
 
 # Validation
 pandas>=2.1.0

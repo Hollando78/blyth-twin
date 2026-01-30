@@ -8,10 +8,10 @@ SCRIPTS := scripts
 DATA := ../data
 CONFIG := config
 
-.PHONY: all setup fetch_osm process pack validate clean help
+.PHONY: all setup fetch_lidar fetch_osm process pack validate clean help
 
 # Default target
-all: setup fetch_osm process pack validate
+all: setup fetch_lidar fetch_osm process pack validate
 
 # Create virtual environment and install dependencies
 setup:
@@ -25,6 +25,20 @@ setup:
 aoi:
 	@echo "Generating AOI..."
 	$(VENV)/bin/python $(SCRIPTS)/00_aoi.py
+
+# Fetch LiDAR data from Environment Agency (automated)
+fetch_lidar: aoi
+	@echo "Fetching LiDAR data..."
+	@if [ -f "$(DATA)/raw/lidar_dtm/*.tif" ] 2>/dev/null; then \
+		echo "LiDAR files already exist. Use 'make fetch_lidar_force' to re-download."; \
+	else \
+		$(VENV)/bin/python $(SCRIPTS)/10_fetch_lidar.py --headless; \
+	fi
+
+# Force re-download LiDAR data
+fetch_lidar_force: aoi
+	@echo "Force re-downloading LiDAR data..."
+	$(VENV)/bin/python $(SCRIPTS)/10_fetch_lidar.py --headless --force
 
 # Fetch OSM vector data
 fetch_osm: aoi
@@ -77,15 +91,17 @@ help:
 	@echo "Blyth Digital Twin Pipeline"
 	@echo ""
 	@echo "Targets:"
-	@echo "  setup          - Create venv and install dependencies"
-	@echo "  aoi            - Generate AOI boundaries"
-	@echo "  fetch_osm      - Download OSM vectors"
-	@echo "  prepare_rasters - Merge and clip LiDAR rasters"
-	@echo "  compute_ndsm   - Calculate normalized DSM"
+	@echo "  setup            - Create venv and install dependencies"
+	@echo "  aoi              - Generate AOI boundaries"
+	@echo "  fetch_lidar      - Download EA LiDAR data (automated)"
+	@echo "  fetch_lidar_force - Force re-download LiDAR data"
+	@echo "  fetch_osm        - Download OSM vectors"
+	@echo "  prepare_rasters  - Merge and clip LiDAR rasters"
+	@echo "  compute_ndsm     - Calculate normalized DSM"
 	@echo "  building_heights - Derive building heights"
-	@echo "  meshes         - Generate terrain and building meshes"
-	@echo "  process        - Run full processing pipeline"
-	@echo "  pack           - Package assets for web"
-	@echo "  validate       - Run QA validation"
-	@echo "  clean          - Remove generated files"
-	@echo "  all            - Run complete pipeline"
+	@echo "  meshes           - Generate terrain and building meshes"
+	@echo "  process          - Run full processing pipeline"
+	@echo "  pack             - Package assets for web"
+	@echo "  validate         - Run QA validation"
+	@echo "  clean            - Remove generated files"
+	@echo "  all              - Run complete pipeline"

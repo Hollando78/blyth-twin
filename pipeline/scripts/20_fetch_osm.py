@@ -2,7 +2,7 @@
 """
 20_fetch_osm.py - OSM Vector Download
 
-Downloads OpenStreetMap data for the Blyth AOI using the Overpass API.
+Downloads OpenStreetMap data for the AOI using the Overpass API.
 
 Input:
     - config/aoi.geojson (AOI boundary)
@@ -15,9 +15,12 @@ Output:
 
 Usage:
     python 20_fetch_osm.py
+    python 20_fetch_osm.py --twin-id <uuid>
 """
 
+import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -35,10 +38,26 @@ OSM_DIR = DATA_DIR / "raw" / "osm"
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
+# Module-level paths that can be overridden for twin mode
+_config_dir = CONFIG_DIR
+_osm_dir = OSM_DIR
+
+
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _config_dir, _osm_dir
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _config_dir = config.config_dir
+    _osm_dir = config.raw_osm_dir
+    config.ensure_directories()
+    return config
+
 
 def load_aoi_bbox_wgs84() -> tuple[float, float, float, float]:
     """Load AOI and return bounding box in WGS84 (south, west, north, east)."""
-    aoi_file = CONFIG_DIR / "aoi.geojson"
+    aoi_file = _config_dir / "aoi.geojson"
     with open(aoi_file) as f:
         aoi = json.load(f)
 
@@ -269,38 +288,42 @@ def save_geojson(data: dict, filepath: Path):
     print(f"  Written: {filepath} ({len(data['features'])} features)")
 
 
-def main():
+def main(twin_id: str = None):
     """Fetch all OSM data."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     print("Loading AOI...")
     bbox = load_aoi_bbox_wgs84()
     print(f"Bounding box (WGS84): S={bbox[0]:.4f}, W={bbox[1]:.4f}, N={bbox[2]:.4f}, E={bbox[3]:.4f}")
 
-    OSM_DIR.mkdir(parents=True, exist_ok=True)
+    _osm_dir.mkdir(parents=True, exist_ok=True)
 
     # Fetch each dataset with delays to be nice to Overpass
     print("\nFetching buildings...")
     buildings = fetch_buildings(bbox)
-    save_geojson(buildings, OSM_DIR / "buildings.geojson")
+    save_geojson(buildings, _osm_dir / "buildings.geojson")
     time.sleep(2)
 
     print("\nFetching roads...")
     roads = fetch_roads(bbox)
-    save_geojson(roads, OSM_DIR / "roads.geojson")
+    save_geojson(roads, _osm_dir / "roads.geojson")
     time.sleep(2)
 
     print("\nFetching water...")
     water = fetch_water(bbox)
-    save_geojson(water, OSM_DIR / "water.geojson")
+    save_geojson(water, _osm_dir / "water.geojson")
     time.sleep(2)
 
     print("\nFetching coastline...")
     coast = fetch_coastline(bbox)
-    save_geojson(coast, OSM_DIR / "coast.geojson")
+    save_geojson(coast, _osm_dir / "coast.geojson")
     time.sleep(2)
 
     print("\nFetching railways...")
     railways = fetch_railways(bbox)
-    save_geojson(railways, OSM_DIR / "railways.geojson")
+    save_geojson(railways, _osm_dir / "railways.geojson")
 
     print("\nDone!")
     print(f"\nSummary:")
@@ -312,4 +335,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Fetch OSM data")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

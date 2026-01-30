@@ -5,16 +5,19 @@
 Computes the normalized Digital Surface Model (nDSM = DSM - DTM).
 
 Input:
-    - data/interim/dtm_clip.tif
-    - data/interim/dsm_clip.tif
+    - data/[twins/{id}/]interim/dtm_clip.tif
+    - data/[twins/{id}/]interim/dsm_clip.tif
 
 Output:
-    - data/interim/ndsm_clip.tif
+    - data/[twins/{id}/]interim/ndsm_clip.tif
 
 Usage:
-    python 40_compute_ndsm.py
+    python 40_compute_ndsm.py --twin-id <uuid>
+    python 40_compute_ndsm.py  # Uses default Blyth paths
 """
 
+import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -23,15 +26,44 @@ import yaml
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
-CONFIG_DIR = SCRIPT_DIR.parent / "config"
-DATA_DIR = SCRIPT_DIR.parent.parent / "data"
-INTERIM_DIR = DATA_DIR / "interim"
+PIPELINE_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(PIPELINE_DIR))
+
+# Module-level path variables (set by get_twin_paths)
+_config_dir: Path = None
+_interim_dir: Path = None
+
+
+def get_twin_paths(twin_id: str | None) -> tuple[Path, Path]:
+    """Get paths for twin-specific or default execution."""
+    global _config_dir, _interim_dir
+
+    if twin_id:
+        from lib.twin_config import get_twin_config
+        config = get_twin_config(twin_id)
+        _config_dir = config.data_dir / "config"
+        _interim_dir = config.data_dir / "interim"
+    else:
+        data_dir = PIPELINE_DIR.parent / "data"
+        _config_dir = PIPELINE_DIR / "config"
+        _interim_dir = data_dir / "interim"
+
+    return _config_dir, _interim_dir
 
 
 def load_settings() -> dict:
     """Load settings from YAML configuration."""
-    with open(CONFIG_DIR / "settings.yaml") as f:
-        return yaml.safe_load(f)
+    settings_file = _config_dir / "settings.yaml"
+    if settings_file.exists():
+        with open(settings_file) as f:
+            return yaml.safe_load(f)
+    # Return defaults if no settings file
+    return {
+        "buildings": {
+            "min_height_m": 0,
+            "max_height_m": 80
+        }
+    }
 
 
 def compute_ndsm(dtm_path: Path, dsm_path: Path, output_path: Path, min_height: float = 0, max_height: float = 80):
@@ -76,27 +108,43 @@ def compute_ndsm(dtm_path: Path, dsm_path: Path, output_path: Path, min_height: 
     print(f"  Pixels > 2.5m (likely buildings): {(valid_ndsm > 2.5).sum():,}")
 
 
-def main():
+def main(twin_id: str | None = None):
     """Compute nDSM."""
+    # Initialize paths
+    get_twin_paths(twin_id)
+
+    print("=" * 60)
+    print("nDSM Computation")
+    print("=" * 60)
+
     settings = load_settings()
 
-    dtm_path = INTERIM_DIR / "dtm_clip.tif"
-    dsm_path = INTERIM_DIR / "dsm_clip.tif"
-    ndsm_path = INTERIM_DIR / "ndsm_clip.tif"
+    dtm_path = _interim_dir / "dtm_clip.tif"
+    dsm_path = _interim_dir / "dsm_clip.tif"
+    ndsm_path = _interim_dir / "ndsm_clip.tif"
 
     # Check inputs exist
     if not dtm_path.exists():
-        raise FileNotFoundError(f"DTM not found: {dtm_path}")
+        print(f"DTM not found: {dtm_path}")
+        print("Skipping nDSM computation (requires both DTM and DSM)")
+        return 1
     if not dsm_path.exists():
-        raise FileNotFoundError(f"DSM not found: {dsm_path}")
+        print(f"DSM not found: {dsm_path}")
+        print("Skipping nDSM computation (requires both DTM and DSM)")
+        return 1
 
-    min_height = settings["buildings"].get("min_height_m", 0)
-    max_height = settings["buildings"]["max_height_m"]
+    min_height = settings.get("buildings", {}).get("min_height_m", 0)
+    max_height = settings.get("buildings", {}).get("max_height_m", 80)
 
     compute_ndsm(dtm_path, dsm_path, ndsm_path, min_height=0, max_height=max_height)
 
     print("\nDone!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Compute normalized DSM")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+
+    sys.exit(main(args.twin_id))

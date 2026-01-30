@@ -12,18 +12,21 @@ This script replaces the previous GeoJSON-based workflow.
 
 Input:
     - PostGIS buildings table (populated by 21_migrate_to_postgis.py)
-    - data/interim/ndsm_clip.tif
+    - data/interim/ndsm_clip.tif (optional - if no LiDAR, uses OSM/default)
 
 Output:
     - Updated height/height_source columns in PostGIS
 
 Usage:
     python 50_building_heights.py
+    python 50_building_heights.py --twin-id <uuid>
 """
 
+import argparse
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +42,24 @@ SCRIPT_DIR = Path(__file__).parent
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
 DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 INTERIM_DIR = DATA_DIR / "interim"
+
+# Module-level paths
+_config_dir = CONFIG_DIR
+_interim_dir = INTERIM_DIR
+_twin_config = None
+
+
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _config_dir, _interim_dir, _twin_config
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _config_dir = config.config_dir
+    _interim_dir = config.interim_dir
+    _twin_config = config
+    config.ensure_directories()
+    return config
 
 
 def get_connection():
@@ -57,7 +78,7 @@ def get_connection():
 
 def load_settings() -> dict:
     """Load settings from YAML configuration."""
-    with open(CONFIG_DIR / "settings.yaml") as f:
+    with open(_config_dir / "settings.yaml") as f:
         return yaml.safe_load(f)
 
 
@@ -241,18 +262,96 @@ def print_stats(conn):
     cur.close()
 
 
-def main():
+def derive_heights_no_lidar(conn, settings: dict):
+    """Derive heights using only OSM data (no LiDAR)."""
+    storey_height = settings["buildings"]["storey_height_m"]
+    min_height = settings["buildings"]["min_height_m"]
+    max_height = settings["buildings"]["max_height_m"]
+
+    cur = conn.cursor()
+
+    # Get all buildings
+    cur.execute("""
+        SELECT id, osm_id, levels, tags
+        FROM buildings
+        ORDER BY id
+    """)
+
+    buildings = cur.fetchall()
+    total = len(buildings)
+    print(f"Processing {total} buildings (no LiDAR)...")
+
+    stats = {"osm_height": 0, "osm_levels": 0, "default": 0}
+    batch_updates = []
+
+    for i, (building_id, osm_id, levels, tags_json) in enumerate(buildings):
+        height = None
+        source = None
+
+        try:
+            tags = json.loads(tags_json) if tags_json else {}
+        except (json.JSONDecodeError, TypeError):
+            tags = {}
+
+        # Priority 1: OSM height tag
+        osm_height_str = tags.get("height")
+        if osm_height_str:
+            height = parse_height(osm_height_str)
+            if height:
+                source = "osm_height"
+
+        # Priority 2: OSM building:levels
+        if height is None and levels:
+            try:
+                height = int(levels) * storey_height
+                source = "osm_levels"
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback: default height
+        if height is None:
+            height = 6.0
+            source = "default"
+
+        height = max(min_height, min(height, max_height))
+        stats[source] += 1
+        batch_updates.append((round(height, 1), source, building_id))
+
+        if (i + 1) % 500 == 0:
+            print(f"  Processed {i + 1}/{total} buildings")
+
+    # Batch update
+    print(f"\nUpdating {len(batch_updates)} buildings in PostGIS...")
+    update_cur = conn.cursor()
+    update_cur.executemany("""
+        UPDATE buildings
+        SET height = %s, height_source = %s, updated_at = NOW()
+        WHERE id = %s
+    """, batch_updates)
+    conn.commit()
+    update_cur.close()
+    cur.close()
+
+    print(f"\nHeight source breakdown:")
+    print(f"  OSM height tag: {stats['osm_height']}")
+    print(f"  OSM levels: {stats['osm_levels']}")
+    print(f"  Default: {stats['default']}")
+    print(f"  Total: {sum(stats.values())}")
+
+
+def main(twin_id: str = None):
     """Derive building heights and update PostGIS."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     print("=" * 50)
     print("BUILDING HEIGHT DERIVATION (PostGIS)")
     print("=" * 50)
     print()
 
     settings = load_settings()
-    ndsm_path = INTERIM_DIR / "ndsm_clip.tif"
-
-    if not ndsm_path.exists():
-        raise FileNotFoundError(f"nDSM not found: {ndsm_path}")
+    ndsm_path = _interim_dir / "ndsm_clip.tif"
 
     conn = get_connection()
 
@@ -269,7 +368,14 @@ def main():
 
     print(f"Found {count:,} buildings in PostGIS")
 
-    derive_heights(conn, ndsm_path, settings)
+    # Check if LiDAR is available
+    if ndsm_path.exists():
+        print(f"Using LiDAR nDSM: {ndsm_path}")
+        derive_heights(conn, ndsm_path, settings)
+    else:
+        print("No LiDAR nDSM found - using OSM data only")
+        derive_heights_no_lidar(conn, settings)
+
     print_stats(conn)
 
     conn.close()
@@ -277,4 +383,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Derive building heights")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

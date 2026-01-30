@@ -13,6 +13,7 @@ export interface Manifest {
   aoi: {
     centre_wgs84: [number, number];
     side_length_m: number;
+    buffer_m?: number;
   };
   assets: Asset[];
 }
@@ -79,14 +80,42 @@ export interface BuildingMetadata {
   chunks: Record<string, BuildingFaceMapEntry[]>;
 }
 
+/**
+ * Get twin ID from URL query parameter.
+ * Returns null for the default/static Blyth twin.
+ */
+function getTwinId(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("twin");
+}
+
+/**
+ * Get base path for twin assets.
+ * For default twin, returns empty string.
+ * For dynamic twins, returns "/twins/{uuid}".
+ */
+function getTwinBasePath(): string {
+  const twinId = getTwinId();
+  return twinId ? `/twins/${twinId}` : "";
+}
+
+// Compute paths based on twin ID
+const basePath = getTwinBasePath();
+const twinId = getTwinId();
+
+// Debug logging
+console.log("[CONFIG] Twin ID:", twinId);
+console.log("[CONFIG] Base path:", basePath);
+
 export const CONFIG = {
-  manifestUrl: "/manifest.json",
-  footprintMetadataUrl: "/footprints_metadata.json",
-  buildingMetadataUrl: "/buildings_metadata.json",
-  facadeAtlasUrl: "/assets/textures/facade_atlas.png",
-  facadeNormalUrl: "/assets/textures/facade_normal_atlas.png",
-  facadeMetaUrl: "/assets/textures/facade_atlas_meta.json",
-  assetsBasePath: "/",
+  twinId: getTwinId(),
+  manifestUrl: `${basePath}/manifest.json`,
+  footprintMetadataUrl: `${basePath}/footprints_metadata.json`,
+  buildingMetadataUrl: `${basePath}/buildings_metadata.json`,
+  facadeAtlasUrl: `${basePath}/assets/textures/facade_atlas.png`,
+  facadeNormalUrl: `${basePath}/assets/textures/facade_normal_atlas.png`,
+  facadeMetaUrl: `${basePath}/assets/textures/facade_atlas_meta.json`,
+  assetsBasePath: `${basePath}/`,
   camera: {
     fov: 45,
     near: 1,

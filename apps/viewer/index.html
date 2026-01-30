@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Digital Twin Platform</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
       * {
         margin: 0;
@@ -22,6 +24,8 @@
         --text-muted: #888;
         --border: rgba(255, 255, 255, 0.1);
         --success: #4CAF50;
+        --warning: #FF9800;
+        --error: #f44336;
       }
 
       html, body {
@@ -103,6 +107,11 @@
         background: var(--primary-dark);
       }
 
+      .btn-primary:disabled {
+        background: #555;
+        cursor: not-allowed;
+      }
+
       /* Main Content */
       .main {
         max-width: 1200px;
@@ -150,17 +159,20 @@
         border-radius: 12px;
         overflow: hidden;
         transition: all 0.3s;
+      }
+
+      .twin-card.clickable {
         cursor: pointer;
       }
 
-      .twin-card:hover {
+      .twin-card.clickable:hover {
         background: var(--bg-card-hover);
         border-color: var(--primary);
         transform: translateY(-2px);
         box-shadow: 0 10px 40px rgba(33, 150, 243, 0.15);
       }
 
-      .twin-card.active {
+      .twin-card.completed {
         border-color: var(--success);
       }
 
@@ -196,16 +208,89 @@
         text-transform: uppercase;
       }
 
-      .twin-status.live {
+      .twin-status.completed {
         background: rgba(76, 175, 80, 0.2);
         color: #81c784;
         border: 1px solid rgba(76, 175, 80, 0.3);
       }
 
-      .twin-status.draft {
+      .twin-status.running {
+        background: rgba(33, 150, 243, 0.2);
+        color: #64b5f6;
+        border: 1px solid rgba(33, 150, 243, 0.3);
+      }
+
+      .twin-status.pending {
         background: rgba(255, 152, 0, 0.2);
         color: #ffb74d;
         border: 1px solid rgba(255, 152, 0, 0.3);
+      }
+
+      .twin-status.failed {
+        background: rgba(244, 67, 54, 0.2);
+        color: #e57373;
+        border: 1px solid rgba(244, 67, 54, 0.3);
+      }
+
+      .twin-status.awaiting_lidar {
+        background: rgba(156, 39, 176, 0.2);
+        color: #ce93d8;
+        border: 1px solid rgba(156, 39, 176, 0.3);
+      }
+
+      /* LiDAR awaiting card styles */
+      .twin-lidar-info {
+        padding: 15px 20px;
+        background: rgba(156, 39, 176, 0.1);
+        border-top: 1px solid var(--border);
+      }
+
+      .lidar-tiles {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-bottom: 10px;
+      }
+
+      .lidar-tiles strong {
+        color: var(--text);
+      }
+
+      .lidar-tile-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .lidar-tile {
+        background: var(--bg-dark);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #ce93d8;
+      }
+
+      .lidar-instructions {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+        line-height: 1.5;
+      }
+
+      .lidar-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .btn-lidar {
+        background: #9c27b0;
+        color: white;
+      }
+
+      .btn-lidar:hover {
+        background: #7b1fa2;
       }
 
       .twin-info {
@@ -243,11 +328,54 @@
         opacity: 0.7;
       }
 
+      /* Progress bar */
+      .twin-progress {
+        padding: 0 20px 20px;
+      }
+
+      .progress-bar {
+        height: 6px;
+        background: var(--border);
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 8px;
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: var(--primary);
+        border-radius: 3px;
+        transition: width 0.3s;
+      }
+
+      .progress-text {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .twin-error {
+        padding: 0 20px 20px;
+        color: var(--error);
+        font-size: 13px;
+      }
+
+      .twin-actions {
+        padding: 0 20px 20px;
+        display: flex;
+        gap: 10px;
+      }
+
+      .btn-small {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+
       /* Create New Card */
       .twin-card.create-new {
         border-style: dashed;
         border-color: var(--text-muted);
         opacity: 0.7;
+        cursor: pointer;
       }
 
       .twin-card.create-new:hover {
@@ -371,7 +499,9 @@
         border: 1px solid var(--border);
         border-radius: 16px;
         width: 90%;
-        max-width: 500px;
+        max-width: 700px;
+        max-height: 90vh;
+        overflow-y: auto;
         transform: translateY(20px);
         transition: transform 0.3s;
       }
@@ -422,7 +552,7 @@
         margin-bottom: 8px;
       }
 
-      .form-input {
+      .form-input, .form-select {
         width: 100%;
         padding: 12px 15px;
         background: var(--bg-dark);
@@ -433,7 +563,7 @@
         transition: border-color 0.2s;
       }
 
-      .form-input:focus {
+      .form-input:focus, .form-select:focus {
         outline: none;
         border-color: var(--primary);
       }
@@ -448,12 +578,63 @@
         margin-top: 6px;
       }
 
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+      }
+
+      /* Map */
+      #aoi-map {
+        height: 300px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        margin-bottom: 10px;
+      }
+
+      .map-hint {
+        font-size: 12px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .coordinates-display {
+        font-size: 13px;
+        color: var(--accent);
+        margin-top: 8px;
+      }
+
       .modal-footer {
         padding: 20px 25px;
         border-top: 1px solid var(--border);
         display: flex;
         justify-content: flex-end;
         gap: 10px;
+      }
+
+      /* Loading state */
+      .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 40px;
+        color: var(--text-muted);
+      }
+
+      .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--border);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
       }
 
       /* Responsive */
@@ -475,6 +656,10 @@
         }
 
         .features-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .form-row {
           grid-template-columns: 1fr;
         }
       }
@@ -502,63 +687,10 @@
       <h1 class="page-title">Your Digital Twins</h1>
       <p class="page-subtitle">Create, manage, and explore interactive 3D models of real-world locations</p>
 
-      <div class="twins-grid">
-        <!-- Blyth Digital Twin -->
-        <div class="twin-card active" onclick="window.location.href='viewer.html'">
-          <div class="twin-preview" style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 50%, #3d7ab0 100%);">
-            <div class="twin-preview-placeholder" style="display:flex; flex-direction: column; gap: 5px;">
-              <span style="font-size: 36px;">🏘️</span>
-              <span style="font-size: 12px; color: #87ceeb;">Click to Open</span>
-            </div>
-            <span class="twin-status live">Live</span>
-          </div>
-          <div class="twin-info">
-            <h3 class="twin-name">Blyth Digital Twin</h3>
-            <p class="twin-location">Northumberland, England</p>
-            <div class="twin-stats">
-              <span class="twin-stat">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                </svg>
-                17,234 buildings
-              </span>
-              <span class="twin-stat">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                </svg>
-                ~6 km²
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Create New Twin -->
-        <div class="twin-card create-new" onclick="openCreateModal()">
-          <div class="create-content">
-            <div class="create-icon">+</div>
-            <span class="create-text">Create New Twin</span>
-            <span class="create-hint">Upload GeoJSON, connect to OSM, or import from other sources</span>
-          </div>
-        </div>
-
-        <!-- Placeholder: Coming Soon -->
-        <div class="twin-card" style="opacity: 0.5; pointer-events: none;">
-          <div class="twin-preview">
-            <div class="twin-preview-placeholder">🌍</div>
-            <span class="twin-status draft">Coming Soon</span>
-          </div>
-          <div class="twin-info">
-            <h3 class="twin-name">Newcastle City Centre</h3>
-            <p class="twin-location">Tyne and Wear, England</p>
-            <div class="twin-stats">
-              <span class="twin-stat">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                </svg>
-                — buildings
-              </span>
-            </div>
-          </div>
+      <div class="twins-grid" id="twins-grid">
+        <div class="loading">
+          <div class="spinner"></div>
+          <span>Loading twins...</span>
         </div>
       </div>
 
@@ -619,6 +751,51 @@
       </section>
     </main>
 
+    <!-- Regenerate Modal -->
+    <div class="modal-overlay" id="regenerateModal">
+      <div class="modal" style="max-width: 500px;">
+        <div class="modal-header">
+          <h3 class="modal-title">Regenerate Twin</h3>
+          <button class="modal-close" onclick="closeRegenerateModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin-bottom: 20px; color: var(--text-muted);">
+            This will re-run the pipeline from scratch. Existing LiDAR tiles will be preserved.
+          </p>
+          <div class="form-group">
+            <label class="form-label">Area Size</label>
+            <select class="form-select" id="regen-size">
+              <option value="1000">1 km x 1 km</option>
+              <option value="2000">2 km x 2 km</option>
+              <option value="3000">3 km x 3 km</option>
+              <option value="5000">5 km x 5 km</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Buffer (for rasters)</label>
+            <select class="form-select" id="regen-buffer">
+              <option value="250">250 m</option>
+              <option value="500">500 m</option>
+              <option value="1000">1000 m</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="regen-use-lidar" style="width: 18px; height: 18px; accent-color: var(--primary);">
+              <span>Use LiDAR terrain data (England only)</span>
+            </label>
+            <p class="form-hint">
+              When enabled, you may need to download LiDAR tiles from the EA portal.
+            </p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeRegenerateModal()">Cancel</button>
+          <button class="btn btn-primary" id="regen-btn" onclick="confirmRegenerate()">Regenerate</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Create Modal -->
     <div class="modal-overlay" id="createModal">
       <div class="modal">
@@ -628,58 +805,611 @@
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Project Name</label>
-            <input type="text" class="form-input" placeholder="e.g., Newcastle City Centre">
+            <label class="form-label">Project Name *</label>
+            <input type="text" class="form-input" id="twin-name" placeholder="e.g., Newcastle City Centre">
           </div>
           <div class="form-group">
-            <label class="form-label">Location</label>
-            <input type="text" class="form-input" placeholder="e.g., Tyne and Wear, England">
+            <label class="form-label">Location Description</label>
+            <input type="text" class="form-input" id="twin-location" placeholder="e.g., Tyne and Wear, England">
           </div>
           <div class="form-group">
-            <label class="form-label">Bounding Box (WGS84)</label>
-            <input type="text" class="form-input" placeholder="minLon, minLat, maxLon, maxLat">
-            <p class="form-hint">Define the area to include in the digital twin</p>
+            <label class="form-label">Select Area of Interest</label>
+            <div id="aoi-map"></div>
+            <p class="map-hint">Click on the map to set the centre point. The rectangle shows the selected area.</p>
+            <div class="coordinates-display" id="coords-display">Centre: Click map to select</div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Data Sources</label>
-            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 8px;">
-              <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
-                <input type="checkbox" checked style="accent-color: var(--primary);"> OpenStreetMap Buildings
-              </label>
-              <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
-                <input type="checkbox" style="accent-color: var(--primary);"> LiDAR Height Data
-              </label>
-              <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
-                <input type="checkbox" style="accent-color: var(--primary);"> Satellite Imagery
-              </label>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Area Size</label>
+              <select class="form-select" id="twin-size">
+                <option value="1000">1 km x 1 km</option>
+                <option value="2000" selected>2 km x 2 km</option>
+                <option value="3000">3 km x 3 km</option>
+                <option value="5000">5 km x 5 km</option>
+              </select>
             </div>
+            <div class="form-group">
+              <label class="form-label">Buffer (for rasters)</label>
+              <select class="form-select" id="twin-buffer">
+                <option value="250">250 m</option>
+                <option value="500" selected>500 m</option>
+                <option value="1000">1000 m</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="twin-use-lidar" checked style="width: 18px; height: 18px; accent-color: var(--primary);">
+              <span>Use LiDAR terrain data (England only)</span>
+            </label>
+            <p class="form-hint">
+              When enabled, you may need to download LiDAR tiles from the EA portal.
+              Disable for faster processing using OSM building heights only.
+            </p>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="alert('Coming soon! This feature is under development.')">Create Twin</button>
+          <button class="btn btn-primary" id="create-btn" onclick="createTwin()">Create Twin</button>
         </div>
       </div>
     </div>
 
     <script>
+      // State
+      let twins = [];
+      let map = null;
+      let marker = null;
+      let rectangle = null;
+      let selectedLat = null;
+      let selectedLon = null;
+      const activeSSE = {};
+
+      // Initialize
+      document.addEventListener('DOMContentLoaded', () => {
+        loadTwins();
+      });
+
+      // API Functions
+      async function loadTwins() {
+        try {
+          const res = await fetch('/api/twins');
+          const data = await res.json();
+          twins = data.twins || [];
+          renderTwins();
+        } catch (err) {
+          console.error('Failed to load twins:', err);
+          // Show static Blyth twin as fallback
+          twins = [];
+          renderTwins();
+        }
+      }
+
+      async function createTwin() {
+        const name = document.getElementById('twin-name').value.trim();
+        const location = document.getElementById('twin-location').value.trim();
+        const size = parseInt(document.getElementById('twin-size').value);
+        const buffer = parseInt(document.getElementById('twin-buffer').value);
+        const useLidar = document.getElementById('twin-use-lidar').checked;
+
+        if (!name) {
+          alert('Please enter a project name');
+          return;
+        }
+
+        if (!selectedLat || !selectedLon) {
+          alert('Please select a location on the map');
+          return;
+        }
+
+        const btn = document.getElementById('create-btn');
+        btn.disabled = true;
+        btn.textContent = 'Creating...';
+
+        try {
+          const res = await fetch('/api/twins', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: name,
+              location_name: location || null,
+              centre_lat: selectedLat,
+              centre_lon: selectedLon,
+              side_length_m: size,
+              buffer_m: buffer,
+              use_lidar: useLidar
+            })
+          });
+
+          if (!res.ok) {
+            throw new Error('Failed to create twin');
+          }
+
+          const data = await res.json();
+          closeCreateModal();
+          loadTwins();
+
+          // Subscribe to progress
+          subscribeToProgress(data.id);
+
+        } catch (err) {
+          console.error('Failed to create twin:', err);
+          alert('Failed to create twin. Please check the API is running.');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Create Twin';
+        }
+      }
+
+      async function deleteTwin(id, e) {
+        e.stopPropagation();
+        if (!confirm('Are you sure you want to delete this twin?')) return;
+
+        try {
+          await fetch(`/api/twins/${id}`, { method: 'DELETE' });
+          loadTwins();
+        } catch (err) {
+          console.error('Failed to delete twin:', err);
+        }
+      }
+
+      async function retryTwin(id, e) {
+        e.stopPropagation();
+        try {
+          await fetch(`/api/twins/${id}/retry`, { method: 'POST' });
+          loadTwins();
+          subscribeToProgress(id);
+        } catch (err) {
+          console.error('Failed to retry twin:', err);
+        }
+      }
+
+      let regeneratingTwinId = null;
+
+      async function regenerateTwin(id, e) {
+        e.stopPropagation();
+        regeneratingTwinId = id;
+
+        // Fetch current twin settings
+        try {
+          const res = await fetch(`/api/twins/${id}`);
+          const twin = await res.json();
+
+          // Pre-fill modal with current values
+          document.getElementById('regen-size').value = twin.side_length_m;
+          document.getElementById('regen-buffer').value = twin.buffer_m;
+          document.getElementById('regen-use-lidar').checked = twin.has_lidar || false;
+
+          // Open modal
+          document.getElementById('regenerateModal').classList.add('active');
+        } catch (err) {
+          console.error('Failed to load twin:', err);
+          alert('Failed to load twin settings');
+        }
+      }
+
+      function closeRegenerateModal() {
+        document.getElementById('regenerateModal').classList.remove('active');
+        regeneratingTwinId = null;
+      }
+
+      async function confirmRegenerate() {
+        if (!regeneratingTwinId) return;
+
+        const size = parseInt(document.getElementById('regen-size').value);
+        const buffer = parseInt(document.getElementById('regen-buffer').value);
+        const useLidar = document.getElementById('regen-use-lidar').checked;
+
+        const btn = document.getElementById('regen-btn');
+        btn.disabled = true;
+        btn.textContent = 'Starting...';
+
+        try {
+          const res = await fetch(`/api/twins/${regeneratingTwinId}/regenerate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              side_length_m: size,
+              buffer_m: buffer,
+              use_lidar: useLidar
+            })
+          });
+
+          if (!res.ok) {
+            const data = await res.json();
+            alert(data.detail || 'Failed to regenerate twin');
+            btn.disabled = false;
+            btn.textContent = 'Regenerate';
+            return;
+          }
+
+          closeRegenerateModal();
+          loadTwins();
+          subscribeToProgress(regeneratingTwinId);
+        } catch (err) {
+          console.error('Failed to regenerate twin:', err);
+          alert('Failed to regenerate twin. Please check the API is running.');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Regenerate';
+        }
+      }
+
+      async function continueTwin(id, e) {
+        e.stopPropagation();
+        const btn = e.target;
+        btn.disabled = true;
+        btn.textContent = 'Checking tiles...';
+
+        try {
+          const res = await fetch(`/api/twins/${id}/continue`, { method: 'POST' });
+          if (!res.ok) {
+            const data = await res.json();
+            alert(data.detail || 'Failed to continue. Please ensure all tiles are uploaded.');
+            btn.disabled = false;
+            btn.textContent = "I've uploaded tiles - Continue";
+            return;
+          }
+          loadTwins();
+          subscribeToProgress(id);
+        } catch (err) {
+          console.error('Failed to continue twin:', err);
+          alert('Failed to continue. Please check the API is running.');
+          btn.disabled = false;
+          btn.textContent = "I've uploaded tiles - Continue";
+        }
+      }
+
+      async function skipLidar(id, e) {
+        e.stopPropagation();
+        if (!confirm('Skip LiDAR data? Buildings will use flat terrain (elevation 0).')) return;
+
+        const btn = e.target;
+        btn.disabled = true;
+        btn.textContent = 'Skipping...';
+
+        try {
+          const res = await fetch(`/api/twins/${id}/skip-lidar`, { method: 'POST' });
+          if (!res.ok) {
+            throw new Error('Failed to skip LiDAR');
+          }
+          loadTwins();
+          subscribeToProgress(id);
+        } catch (err) {
+          console.error('Failed to skip LiDAR:', err);
+          alert('Failed to skip LiDAR. Please check the API is running.');
+          btn.disabled = false;
+          btn.textContent = 'Skip LiDAR (flat terrain)';
+        }
+      }
+
+      async function loadLidarTiles(twinId) {
+        try {
+          const res = await fetch(`/api/twins/${twinId}/lidar-tiles`);
+          const data = await res.json();
+
+          const container = document.getElementById(`lidar-tiles-${twinId}`);
+          if (!container) return;
+
+          if (data.tiles_needed && data.tiles_needed.length > 0) {
+            container.innerHTML = data.tiles_needed
+              .map(tile => `<span class="lidar-tile">${tile}</span>`)
+              .join('');
+          } else {
+            container.innerHTML = '<span>No tiles needed</span>';
+          }
+        } catch (err) {
+          console.error('Failed to load LiDAR tiles:', err);
+        }
+      }
+
+      // SSE Progress
+      function subscribeToProgress(twinId) {
+        if (activeSSE[twinId]) return;
+
+        const es = new EventSource(`/api/twins/${twinId}/events`);
+        activeSSE[twinId] = es;
+
+        es.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            updateTwinCard(twinId, data);
+
+            if (data.status === 'completed' || data.status === 'failed') {
+              es.close();
+              delete activeSSE[twinId];
+              loadTwins();
+            }
+          } catch (err) {
+            console.error('SSE parse error:', err);
+          }
+        };
+
+        es.onerror = () => {
+          es.close();
+          delete activeSSE[twinId];
+        };
+      }
+
+      function updateTwinCard(twinId, data) {
+        const card = document.querySelector(`[data-twin-id="${twinId}"]`);
+        if (!card) return;
+
+        const statusEl = card.querySelector('.twin-status');
+        const progressEl = card.querySelector('.progress-fill');
+        const progressTextEl = card.querySelector('.progress-text');
+
+        if (statusEl) {
+          statusEl.className = `twin-status ${data.status}`;
+          statusEl.textContent = data.status;
+        }
+
+        if (progressEl) {
+          progressEl.style.width = `${data.progress_pct}%`;
+        }
+
+        if (progressTextEl) {
+          progressTextEl.textContent = data.current_step
+            ? `${data.progress_pct}% - ${data.current_step}`
+            : `${data.progress_pct}%`;
+        }
+      }
+
+      // Render Functions
+      function renderTwins() {
+        const grid = document.getElementById('twins-grid');
+        let html = '';
+
+        // Static Blyth twin (always show)
+        html += `
+          <div class="twin-card clickable completed" onclick="window.location.href='viewer.html'">
+            <div class="twin-preview" style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 50%, #3d7ab0 100%);">
+              <div class="twin-preview-placeholder" style="display:flex; flex-direction: column; gap: 5px;">
+                <span style="font-size: 36px;">🏘️</span>
+                <span style="font-size: 12px; color: #87ceeb;">Click to Open</span>
+              </div>
+              <span class="twin-status completed">Live</span>
+            </div>
+            <div class="twin-info">
+              <h3 class="twin-name">Blyth Digital Twin</h3>
+              <p class="twin-location">Northumberland, England</p>
+              <div class="twin-stats">
+                <span class="twin-stat">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                  </svg>
+                  17,234 buildings
+                </span>
+                <span class="twin-stat">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  </svg>
+                  ~6 km²
+                </span>
+              </div>
+            </div>
+          </div>
+        `;
+
+        // Dynamic twins from API
+        for (const twin of twins) {
+          const isClickable = twin.status === 'completed';
+          const onclick = isClickable
+            ? `window.location.href='viewer.html?twin=${twin.id}'`
+            : '';
+
+          html += `
+            <div class="twin-card ${isClickable ? 'clickable' : ''} ${twin.status}"
+                 data-twin-id="${twin.id}"
+                 ${onclick ? `onclick="${onclick}"` : ''}>
+              <div class="twin-preview">
+                <div class="twin-preview-placeholder">🌍</div>
+                <span class="twin-status ${twin.status}">${twin.status}</span>
+              </div>
+              <div class="twin-info">
+                <h3 class="twin-name">${escapeHtml(twin.name)}</h3>
+                <p class="twin-location">${escapeHtml(twin.location_name || formatCoords(twin.centre_lat, twin.centre_lon))}</p>
+                <div class="twin-stats">
+                  <span class="twin-stat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                    </svg>
+                    ${twin.building_count ? twin.building_count.toLocaleString() + ' buildings' : '—'}
+                  </span>
+                  <span class="twin-stat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    </svg>
+                    ${(twin.side_length_m / 1000).toFixed(1)} km²
+                  </span>
+                </div>
+              </div>
+              ${twin.status === 'running' || twin.status === 'pending' ? `
+                <div class="twin-progress">
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${twin.progress_pct}%"></div>
+                  </div>
+                  <span class="progress-text">${twin.progress_pct}% ${twin.current_step ? '- ' + twin.current_step : ''}</span>
+                </div>
+              ` : ''}
+              ${twin.status === 'awaiting_lidar' ? `
+                <div class="twin-lidar-info" id="lidar-info-${twin.id}">
+                  <div class="lidar-tiles">
+                    <strong>LiDAR tiles needed</strong>
+                    <div class="lidar-tile-list" id="lidar-tiles-${twin.id}">
+                      Loading...
+                    </div>
+                  </div>
+                  <div class="lidar-instructions">
+                    Download DTM 1m tiles from the EA portal and place them in the twin's data directory.
+                  </div>
+                  <div class="lidar-actions">
+                    <a href="https://environment.data.gov.uk/survey" target="_blank" class="btn btn-lidar btn-small">
+                      Download from EA Portal
+                    </a>
+                    <button class="btn btn-primary btn-small" onclick="continueTwin('${twin.id}', event)">
+                      I've uploaded tiles - Continue
+                    </button>
+                    <button class="btn btn-secondary btn-small" onclick="skipLidar('${twin.id}', event)">
+                      Skip LiDAR (flat terrain)
+                    </button>
+                  </div>
+                </div>
+              ` : ''}
+              ${twin.status === 'failed' ? `
+                <div class="twin-error">Error: ${escapeHtml(twin.error_message || 'Unknown error')}</div>
+                <div class="twin-actions">
+                  <button class="btn btn-primary btn-small" onclick="retryTwin('${twin.id}', event)">Retry</button>
+                  <button class="btn btn-secondary btn-small" onclick="deleteTwin('${twin.id}', event)">Delete</button>
+                </div>
+              ` : ''}
+              ${twin.status === 'completed' ? `
+                <div class="twin-actions">
+                  <button class="btn btn-secondary btn-small" onclick="regenerateTwin('${twin.id}', event)">Regenerate</button>
+                  <button class="btn btn-secondary btn-small" onclick="deleteTwin('${twin.id}', event)">Delete</button>
+                </div>
+              ` : ''}
+            </div>
+          `;
+
+          // Subscribe to running twins
+          if (twin.status === 'running' || twin.status === 'pending') {
+            subscribeToProgress(twin.id);
+          }
+
+          // Load LiDAR tile info for awaiting twins
+          if (twin.status === 'awaiting_lidar') {
+            setTimeout(() => loadLidarTiles(twin.id), 100);
+          }
+        }
+
+        // Create new card
+        html += `
+          <div class="twin-card create-new" onclick="openCreateModal()">
+            <div class="create-content">
+              <div class="create-icon">+</div>
+              <span class="create-text">Create New Twin</span>
+              <span class="create-hint">Select an area on the map to generate a new digital twin</span>
+            </div>
+          </div>
+        `;
+
+        grid.innerHTML = html;
+      }
+
+      // Modal Functions
       function openCreateModal() {
         document.getElementById('createModal').classList.add('active');
+
+        // Initialize map if not already done
+        if (!map) {
+          map = L.map('aoi-map').setView([54.5, -1.5], 6);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+          }).addTo(map);
+
+          map.on('click', onMapClick);
+
+          // Update rectangle on size change
+          document.getElementById('twin-size').addEventListener('change', updateRectangle);
+        }
+
+        setTimeout(() => map.invalidateSize(), 100);
       }
 
       function closeCreateModal() {
         document.getElementById('createModal').classList.remove('active');
+        // Reset form
+        document.getElementById('twin-name').value = '';
+        document.getElementById('twin-location').value = '';
+        document.getElementById('twin-use-lidar').checked = true;
+        selectedLat = null;
+        selectedLon = null;
+        if (marker) {
+          map.removeLayer(marker);
+          marker = null;
+        }
+        if (rectangle) {
+          map.removeLayer(rectangle);
+          rectangle = null;
+        }
+        document.getElementById('coords-display').textContent = 'Centre: Click map to select';
       }
 
-      // Close modal on escape key
+      function onMapClick(e) {
+        selectedLat = e.latlng.lat;
+        selectedLon = e.latlng.lng;
+
+        // Update marker
+        if (marker) {
+          marker.setLatLng(e.latlng);
+        } else {
+          marker = L.marker(e.latlng).addTo(map);
+        }
+
+        updateRectangle();
+
+        document.getElementById('coords-display').textContent =
+          `Centre: ${selectedLat.toFixed(5)}, ${selectedLon.toFixed(5)}`;
+      }
+
+      function updateRectangle() {
+        if (!selectedLat || !selectedLon) return;
+
+        const size = parseInt(document.getElementById('twin-size').value);
+        const halfSizeKm = (size / 2) / 1000;
+
+        // Approximate degrees (at UK latitudes)
+        const latDelta = halfSizeKm / 111;
+        const lonDelta = halfSizeKm / (111 * Math.cos(selectedLat * Math.PI / 180));
+
+        const bounds = [
+          [selectedLat - latDelta, selectedLon - lonDelta],
+          [selectedLat + latDelta, selectedLon + lonDelta]
+        ];
+
+        if (rectangle) {
+          rectangle.setBounds(bounds);
+        } else {
+          rectangle = L.rectangle(bounds, {
+            color: '#2196F3',
+            weight: 2,
+            fillOpacity: 0.1
+          }).addTo(map);
+        }
+
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+
+      // Utilities
+      function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function formatCoords(lat, lon) {
+        return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+      }
+
+      // Keyboard shortcuts
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeCreateModal();
+        if (e.key === 'Escape') {
+          closeCreateModal();
+          closeRegenerateModal();
+        }
       });
 
-      // Close modal on overlay click
       document.getElementById('createModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('modal-overlay')) {
           closeCreateModal();
+        }
+      });
+
+      document.getElementById('regenerateModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) {
+          closeRegenerateModal();
         }
       });
     </script>

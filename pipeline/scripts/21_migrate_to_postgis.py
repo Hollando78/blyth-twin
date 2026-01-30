@@ -10,10 +10,13 @@ height/height_source as NULL, and adds audit columns.
 
 Usage:
     python 21_migrate_to_postgis.py
+    python 21_migrate_to_postgis.py --twin-id <uuid>
 """
 
+import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import psycopg2
@@ -27,8 +30,26 @@ CONFIG_DIR = SCRIPT_DIR.parent / "config"
 DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 RAW_DIR = DATA_DIR / "raw" / "osm"
 
+# Module-level paths that can be overridden for twin mode
+_config_dir = CONFIG_DIR
+_raw_dir = RAW_DIR
+_twin_id = None
+
 # Coordinate transformer
 WGS84_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
+
+
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _config_dir, _raw_dir, _twin_id
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _config_dir = config.config_dir
+    _raw_dir = config.raw_osm_dir
+    _twin_id = twin_id
+    config.ensure_directories()
+    return config
 
 
 def get_connection():
@@ -110,7 +131,7 @@ def migrate_buildings(conn):
     Reads from raw/osm/buildings.geojson (not processed).
     Initializes height and height_source as NULL.
     """
-    buildings_path = RAW_DIR / "buildings.geojson"
+    buildings_path = _raw_dir / "buildings.geojson"
 
     if not buildings_path.exists():
         print(f"  Buildings file not found: {buildings_path}")
@@ -204,7 +225,7 @@ def migrate_buildings(conn):
 
 def migrate_roads(conn):
     """Migrate roads from GeoJSON to PostGIS."""
-    roads_path = RAW_DIR / "roads.geojson"
+    roads_path = _raw_dir / "roads.geojson"
 
     if not roads_path.exists():
         print(f"  Roads file not found: {roads_path}")
@@ -260,7 +281,7 @@ def migrate_roads(conn):
 
 def migrate_water(conn):
     """Migrate water features from GeoJSON to PostGIS."""
-    water_path = RAW_DIR / "water.geojson"
+    water_path = _raw_dir / "water.geojson"
 
     if not water_path.exists():
         print(f"  Water file not found: {water_path}")
@@ -317,7 +338,7 @@ def migrate_water(conn):
 
 def migrate_aoi(conn):
     """Migrate AOI from GeoJSON to PostGIS."""
-    aoi_path = CONFIG_DIR / "aoi.geojson"
+    aoi_path = _config_dir / "aoi.geojson"
 
     if not aoi_path.exists():
         print(f"  AOI file not found: {aoi_path}")
@@ -356,7 +377,7 @@ def create_chunks(conn):
     cur = conn.cursor()
     cur.execute("TRUNCATE chunks RESTART IDENTITY CASCADE")
 
-    settings_path = CONFIG_DIR / "settings.yaml"
+    settings_path = _config_dir / "settings.yaml"
     with open(settings_path) as f:
         settings = yaml.safe_load(f)
 
@@ -441,8 +462,12 @@ def print_stats(conn):
     cur.close()
 
 
-def main():
+def main(twin_id: str = None):
     """Run migration from raw OSM data to PostGIS."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     print("=" * 50)
     print("MIGRATING RAW OSM DATA TO POSTGIS")
     print("=" * 50)
@@ -480,4 +505,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Migrate OSM data to PostGIS")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

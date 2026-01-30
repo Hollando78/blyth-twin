@@ -32,7 +32,7 @@ export default defineConfig({
     }),
   ],
   server: {
-    host: "127.0.0.1",
+    host: "0.0.0.0",
     port: 5173,
     strictPort: false,
     cors: true,
@@ -40,6 +40,16 @@ export default defineConfig({
       "Access-Control-Allow-Origin": "*",
       // Cache static assets for 1 year (with cache busting via hash)
       "Cache-Control": "public, max-age=31536000, immutable",
+    },
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/twins": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
 });

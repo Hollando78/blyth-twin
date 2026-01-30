@@ -5,18 +5,21 @@
 Generates the Area of Interest (AOI) boundary files for the Blyth Digital Twin.
 
 Input:
-    - Centre coordinate (lat/lon from settings.yaml)
+    - Centre coordinate (lat/lon from settings.yaml or twin database)
     - Side length in metres
 
 Output:
-    - config/aoi.geojson (exact 5km square in EPSG:27700)
+    - config/aoi.geojson (exact square in EPSG:27700)
     - config/aoi_buffer.geojson (buffered AOI for raster operations)
 
 Usage:
     python 00_aoi.py
+    python 00_aoi.py --twin-id <uuid>
 """
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import yaml
@@ -30,8 +33,17 @@ CONFIG_DIR = SCRIPT_DIR.parent / "config"
 SETTINGS_FILE = CONFIG_DIR / "settings.yaml"
 
 
-def load_settings() -> dict:
-    """Load settings from YAML configuration."""
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    return get_twin_config(twin_id)
+
+
+def load_settings(twin_config=None) -> dict:
+    """Load settings from YAML configuration or twin config."""
+    if twin_config:
+        return twin_config.load_settings()
     with open(SETTINGS_FILE) as f:
         return yaml.safe_load(f)
 
@@ -91,10 +103,19 @@ def create_aoi(centre_lat: float, centre_lon: float, side_length_m: float, buffe
     }
 
 
-def main():
+def main(twin_id: str = None):
     """Generate AOI files."""
+    twin_config = None
+    config_dir = CONFIG_DIR
+
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        twin_config = get_twin_paths(twin_id)
+        config_dir = twin_config.config_dir
+        twin_config.ensure_directories()
+
     print("Loading settings...")
-    settings = load_settings()
+    settings = load_settings(twin_config)
     aoi_config = settings["aoi"]
 
     centre_lat = aoi_config["centre_lat"]
@@ -109,7 +130,12 @@ def main():
     # Generate exact AOI
     print("\nGenerating AOI...")
     aoi = create_aoi(centre_lat, centre_lon, side_length)
-    aoi_file = CONFIG_DIR / "aoi.geojson"
+
+    # Update name for twin
+    if twin_config:
+        aoi["features"][0]["properties"]["name"] = twin_config.name
+
+    aoi_file = config_dir / "aoi.geojson"
     with open(aoi_file, "w") as f:
         json.dump(aoi, f, indent=2)
     print(f"Written: {aoi_file}")
@@ -117,7 +143,10 @@ def main():
     # Generate buffered AOI
     print("\nGenerating buffered AOI...")
     aoi_buffered = create_aoi(centre_lat, centre_lon, side_length, buffer_m)
-    aoi_buffer_file = CONFIG_DIR / "aoi_buffer.geojson"
+    if twin_config:
+        aoi_buffered["features"][0]["properties"]["name"] = f"{twin_config.name} (buffered)"
+
+    aoi_buffer_file = config_dir / "aoi_buffer.geojson"
     with open(aoi_buffer_file, "w") as f:
         json.dump(aoi_buffered, f, indent=2)
     print(f"Written: {aoi_buffer_file}")
@@ -132,4 +161,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Generate AOI files")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

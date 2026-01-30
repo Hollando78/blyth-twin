@@ -14,12 +14,15 @@ Output:
 
 Usage:
     python 70_pack_assets.py
+    python 70_pack_assets.py --twin-id <uuid>
 """
 
+import argparse
 import gzip
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from datetime import datetime
 
@@ -34,6 +37,7 @@ DRACO_QUANTIZE_TEXCOORD = 12 # bits for texcoord quantization
 # Additional files to copy (not GLB assets)
 EXTRA_FILES = [
     ("footprints_metadata.json", "footprints_metadata.json"),
+    ("buildings_metadata.json", "buildings_metadata.json"),
 ]
 
 # Texture files to copy
@@ -50,16 +54,34 @@ DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
 DIST_DIR = SCRIPT_DIR.parent.parent / "dist" / "blyth_mvp_v1"
 
+# Module-level paths
+_config_dir = CONFIG_DIR
+_processed_dir = PROCESSED_DIR
+_dist_dir = DIST_DIR
+
+
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _config_dir, _processed_dir, _dist_dir
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _config_dir = config.config_dir
+    _processed_dir = config.processed_dir
+    _dist_dir = config.dist_dir
+    config.ensure_directories()
+    return config
+
 
 def load_settings() -> dict:
     """Load settings from YAML configuration."""
-    with open(CONFIG_DIR / "settings.yaml") as f:
+    with open(_config_dir / "settings.yaml") as f:
         return yaml.safe_load(f)
 
 
 def load_aoi_info() -> dict:
     """Load AOI information for manifest."""
-    with open(CONFIG_DIR / "aoi.geojson") as f:
+    with open(_config_dir / "aoi.geojson") as f:
         aoi = json.load(f)
     return aoi["features"][0]["properties"]
 
@@ -272,14 +294,19 @@ def generate_manifest(assets: list[dict], aoi_info: dict, settings: dict) -> dic
         },
         "aoi": {
             "centre_wgs84": aoi_info["centre_wgs84"],
-            "side_length_m": aoi_info["side_length_m"]
+            "side_length_m": aoi_info["side_length_m"],
+            "buffer_m": aoi_info.get("buffer_m") or settings.get("aoi", {}).get("buffer_m", 0)
         },
         "assets": assets
     }
 
 
-def main():
+def main(twin_id: str = None):
     """Pack assets for web delivery."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     settings = load_settings()
     compress = settings["output"]["compress"]
 
@@ -287,7 +314,7 @@ def main():
     aoi_info = load_aoi_info()
 
     # Create output directories
-    assets_dir = DIST_DIR / "assets"
+    assets_dir = _dist_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
 
     all_assets = []
@@ -295,16 +322,16 @@ def main():
     chunk_size = settings["terrain"]["chunk_size_m"]
 
     # Pack terrain
-    terrain_dir = PROCESSED_DIR / "terrain"
+    terrain_dir = _processed_dir / "terrain"
     if terrain_dir.exists():
         print("\nPacking terrain assets...")
         terrain_assets = pack_assets(terrain_dir, assets_dir, "terrain", compress, chunk_size)
         all_assets.extend(terrain_assets)
 
     # Pack buildings using hybrid approach (textured > detailed > original)
-    buildings_textured_dir = PROCESSED_DIR / "buildings_textured"
-    buildings_detailed_dir = PROCESSED_DIR / "buildings_detailed"
-    buildings_dir = PROCESSED_DIR / "buildings"
+    buildings_textured_dir = _processed_dir / "buildings_textured"
+    buildings_detailed_dir = _processed_dir / "buildings_detailed"
+    buildings_dir = _processed_dir / "buildings"
 
     # Check what sources we have
     has_textured = buildings_textured_dir.exists() and list(buildings_textured_dir.glob("*.glb"))
@@ -325,35 +352,35 @@ def main():
         all_assets.extend(building_assets)
 
     # Pack roads
-    roads_dir = PROCESSED_DIR / "roads"
+    roads_dir = _processed_dir / "roads"
     if roads_dir.exists():
         print("\nPacking road assets...")
         road_assets = pack_assets(roads_dir, assets_dir, "roads", compress, chunk_size)
         all_assets.extend(road_assets)
 
     # Pack railways
-    railways_dir = PROCESSED_DIR / "railways"
+    railways_dir = _processed_dir / "railways"
     if railways_dir.exists():
         print("\nPacking railway assets...")
         railway_assets = pack_assets(railways_dir, assets_dir, "railways", compress, chunk_size)
         all_assets.extend(railway_assets)
 
     # Pack water
-    water_dir = PROCESSED_DIR / "water"
+    water_dir = _processed_dir / "water"
     if water_dir.exists():
         print("\nPacking water assets...")
         water_assets = pack_assets(water_dir, assets_dir, "water", compress, chunk_size)
         all_assets.extend(water_assets)
 
     # Pack sea
-    sea_dir = PROCESSED_DIR / "sea"
+    sea_dir = _processed_dir / "sea"
     if sea_dir.exists():
         print("\nPacking sea assets...")
         sea_assets = pack_assets(sea_dir, assets_dir, "sea", compress, chunk_size)
         all_assets.extend(sea_assets)
 
     # Pack footprints
-    footprints_dir = PROCESSED_DIR / "footprints"
+    footprints_dir = _processed_dir / "footprints"
     if footprints_dir.exists():
         print("\nPacking footprint assets...")
         footprint_assets = pack_assets(footprints_dir, assets_dir, "footprints", compress, chunk_size)
@@ -362,15 +389,15 @@ def main():
     # Copy extra files (metadata, etc.)
     print("\nCopying extra files...")
     for src_name, dst_name in EXTRA_FILES:
-        src_path = PROCESSED_DIR / src_name
+        src_path = _processed_dir / src_name
         if src_path.exists():
-            dst_path = DIST_DIR / dst_name
+            dst_path = _dist_dir / dst_name
             shutil.copy2(src_path, dst_path)
             print(f"  Copied: {dst_name}")
 
     # Copy texture files
     print("\nCopying texture files...")
-    textures_src_dir = PROCESSED_DIR / "textures"
+    textures_src_dir = _processed_dir / "textures"
     textures_dst_dir = assets_dir / "textures"
 
     if textures_src_dir.exists():
@@ -403,17 +430,20 @@ def main():
     print("\nGenerating manifest...")
     manifest = generate_manifest(all_assets, aoi_info, settings)
 
-    manifest_file = DIST_DIR / "manifest.json"
+    manifest_file = _dist_dir / "manifest.json"
     with open(manifest_file, "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"Written: {manifest_file}")
 
     print(f"\nSummary:")
     print(f"  Total assets: {len(all_assets)}")
-    print(f"  Output directory: {DIST_DIR}")
+    print(f"  Output directory: {_dist_dir}")
 
     print("\nDone!")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Pack assets for web delivery")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

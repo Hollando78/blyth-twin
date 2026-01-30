@@ -14,9 +14,12 @@ Output:
 
 Usage:
     python 60_generate_meshes.py
+    python 60_generate_meshes.py --twin-id <uuid>
 """
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -103,22 +106,145 @@ DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 INTERIM_DIR = DATA_DIR / "interim"
 PROCESSED_DIR = DATA_DIR / "processed"
 
+# Module-level paths
+_config_dir = CONFIG_DIR
+_data_dir = DATA_DIR
+_interim_dir = INTERIM_DIR
+_processed_dir = PROCESSED_DIR
+
 # Coordinate transformer
 WGS84_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
 
 
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _config_dir, _data_dir, _interim_dir, _processed_dir
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _config_dir = config.config_dir
+    _data_dir = config.data_dir
+    _interim_dir = config.interim_dir
+    _processed_dir = config.processed_dir
+    config.ensure_directories()
+    return config
+
+
 def load_settings() -> dict:
     """Load settings from YAML configuration."""
-    with open(CONFIG_DIR / "settings.yaml") as f:
+    with open(_config_dir / "settings.yaml") as f:
         return yaml.safe_load(f)
 
 
 def load_aoi_centre() -> tuple[float, float]:
     """Load AOI centre for local origin."""
-    with open(CONFIG_DIR / "aoi.geojson") as f:
+    with open(_config_dir / "aoi.geojson") as f:
         aoi = json.load(f)
     centre = aoi["features"][0]["properties"]["centre_bng"]
     return tuple(centre)
+
+
+def add_terrain_skirts(mesh: trimesh.Trimesh, skirt_depth: float = 10.0) -> trimesh.Trimesh:
+    """
+    Add vertical skirts around the edges of a terrain mesh to hide gaps between chunks.
+
+    The skirts extend downward from the edge vertices, creating a vertical wall
+    that hides any cracks between adjacent terrain chunks.
+
+    Args:
+        mesh: The terrain mesh to add skirts to
+        skirt_depth: How far down the skirts extend (metres)
+
+    Returns:
+        New mesh with skirts added
+    """
+    vertices = mesh.vertices.copy()
+    faces = list(mesh.faces)
+
+    # Get original UVs if available
+    original_uvs = None
+    if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+        original_uvs = mesh.visual.uv.copy()
+
+    # Get the mesh bounds
+    min_x, min_y = vertices[:, 0].min(), vertices[:, 1].min()
+    max_x, max_y = vertices[:, 0].max(), vertices[:, 1].max()
+
+    # Find edge vertices (within tolerance of bounds)
+    tolerance = 0.1
+    edge_mask_left = np.abs(vertices[:, 0] - min_x) < tolerance
+    edge_mask_right = np.abs(vertices[:, 0] - max_x) < tolerance
+    edge_mask_bottom = np.abs(vertices[:, 1] - min_y) < tolerance
+    edge_mask_top = np.abs(vertices[:, 1] - max_y) < tolerance
+
+    # Get minimum elevation for skirt bottom
+    min_z = vertices[:, 2].min() - skirt_depth
+
+    # For each edge, create skirt vertices and faces
+    n_original = len(vertices)
+    skirt_vertices = []
+    skirt_uvs = []
+    skirt_faces = []
+
+    def add_skirt_for_edge(edge_indices, sort_axis):
+        """Add skirt for a set of edge vertices, sorted along an axis."""
+        if len(edge_indices) < 2:
+            return
+
+        # Sort edge vertices along the edge
+        sorted_indices = edge_indices[np.argsort(vertices[edge_indices, sort_axis])]
+
+        for i in range(len(sorted_indices) - 1):
+            idx1 = sorted_indices[i]
+            idx2 = sorted_indices[i + 1]
+
+            # Top vertices (original edge)
+            v1_top = vertices[idx1]
+            v2_top = vertices[idx2]
+
+            # Bottom vertices (skirt)
+            v1_bottom = np.array([v1_top[0], v1_top[1], min_z])
+            v2_bottom = np.array([v2_top[0], v2_top[1], min_z])
+
+            # Add bottom vertices
+            base_idx = n_original + len(skirt_vertices)
+            skirt_vertices.append(v1_bottom)
+            skirt_vertices.append(v2_bottom)
+
+            # Copy UVs from corresponding top vertices
+            if original_uvs is not None:
+                skirt_uvs.append(original_uvs[idx1].copy())
+                skirt_uvs.append(original_uvs[idx2].copy())
+
+            # Create two triangles for the skirt quad
+            # Using original indices for top, new indices for bottom
+            skirt_faces.append([idx1, base_idx, idx2])
+            skirt_faces.append([idx2, base_idx, base_idx + 1])
+
+    # Add skirts for each edge
+    add_skirt_for_edge(np.where(edge_mask_left)[0], sort_axis=1)
+    add_skirt_for_edge(np.where(edge_mask_right)[0], sort_axis=1)
+    add_skirt_for_edge(np.where(edge_mask_bottom)[0], sort_axis=0)
+    add_skirt_for_edge(np.where(edge_mask_top)[0], sort_axis=0)
+
+    if not skirt_vertices:
+        return mesh
+
+    # Combine original and skirt geometry
+    all_vertices = np.vstack([vertices, np.array(skirt_vertices)])
+    all_faces = np.array(faces + skirt_faces)
+
+    # Create new mesh with combined UVs
+    # Use process=False to prevent trimesh from merging duplicate vertices,
+    # which would break the UV mapping
+    new_mesh = trimesh.Trimesh(vertices=all_vertices, faces=all_faces, process=False)
+
+    if original_uvs is not None and skirt_uvs:
+        all_uvs = np.vstack([original_uvs, np.array(skirt_uvs)])
+        # Use create_uv_visual for proper GLB export with dummy texture
+        new_mesh.visual = create_uv_visual(all_uvs)
+
+    return new_mesh
 
 
 def generate_terrain_mesh(dtm_path: Path, chunk_size: float, origin: tuple[float, float], simplify: int = 4) -> dict:
@@ -249,10 +375,88 @@ def generate_terrain_mesh(dtm_path: Path, chunk_size: float, origin: tuple[float
             mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
             mesh.visual = create_uv_visual(uvs)
 
+            # Add skirts to hide gaps between chunks
+            mesh = add_terrain_skirts(mesh, skirt_depth=10.0)
+
             chunk_key = f"{ci}_{cj}"
             chunks[chunk_key] = mesh
 
-    print(f"  Generated {len(chunks)} terrain chunks")
+    print(f"  Generated {len(chunks)} terrain chunks (with skirts)")
+    return chunks
+
+
+def generate_flat_terrain(aoi_bounds: tuple, chunk_size: float, elevation: float = 0.0) -> dict:
+    """
+    Generate flat terrain chunks when no LiDAR data is available.
+
+    Args:
+        aoi_bounds: (min_x, min_y, max_x, max_y) in local coordinates
+        chunk_size: Size of each chunk in metres
+        elevation: Ground elevation (default 0)
+
+    Returns:
+        Dictionary of chunk_key -> trimesh.Trimesh
+    """
+    min_x, min_y, max_x, max_y = aoi_bounds
+    aoi_width = max_x - min_x
+    aoi_height = max_y - min_y
+
+    # Calculate chunk grid
+    n_chunks_x = int(np.ceil(aoi_width / chunk_size))
+    n_chunks_y = int(np.ceil(aoi_height / chunk_size))
+
+    print(f"  Generating {n_chunks_x}x{n_chunks_y} flat terrain chunks...")
+
+    chunks = {}
+
+    for ci in range(n_chunks_x):
+        for cj in range(n_chunks_y):
+            # Chunk bounds in local coordinates
+            cx_min = min_x + ci * chunk_size
+            cx_max = min(cx_min + chunk_size, max_x)
+            cy_min = min_y + cj * chunk_size
+            cy_max = min(cy_min + chunk_size, max_y)
+
+            # Create simple quad for flat terrain
+            vertices = np.array([
+                [cx_min, cy_min, elevation],
+                [cx_max, cy_min, elevation],
+                [cx_max, cy_max, elevation],
+                [cx_min, cy_max, elevation],
+            ], dtype=np.float32)
+
+            faces = np.array([
+                [0, 1, 2],
+                [0, 2, 3],
+            ], dtype=np.int32)
+
+            # UV coordinates - map to this chunk's portion of the overall texture
+            # UV (0,0) = bottom-left of AOI, (1,1) = top-right of AOI
+            u_min = (cx_min - min_x) / aoi_width
+            u_max = (cx_max - min_x) / aoi_width
+            v_min = (cy_min - min_y) / aoi_height
+            v_max = (cy_max - min_y) / aoi_height
+
+            uv = np.array([
+                [u_min, v_min],
+                [u_max, v_min],
+                [u_max, v_max],
+                [u_min, v_max],
+            ], dtype=np.float32)
+
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+            mesh.visual = trimesh.visual.TextureVisuals(uv=uv)
+
+            # Grass green color as fallback
+            mesh.visual.face_colors = [80, 120, 60, 255]
+
+            # Add skirts to hide gaps between chunks
+            mesh = add_terrain_skirts(mesh, skirt_depth=10.0)
+
+            chunk_key = f"{ci - n_chunks_x // 2}_{cj - n_chunks_y // 2}"
+            chunks[chunk_key] = mesh
+
+    print(f"  Generated {len(chunks)} flat terrain chunks (with skirts)")
     return chunks
 
 
@@ -536,23 +740,33 @@ def load_custom_mesh(osm_id: int, origin: tuple[float, float]) -> trimesh.Trimes
 
 
 def generate_building_meshes(buildings_path: Path, dtm_path: Path,
-                            origin: tuple[float, float], chunk_size: float) -> dict:
+                            origin: tuple[float, float], chunk_size: float,
+                            twin_id: str = None) -> dict:
     """Generate building meshes, organized by chunk.
 
     Buildings with custom meshes in the database are loaded instead of
-    being procedurally generated.
+    being procedurally generated (only for the default Blyth twin).
     """
     print(f"Loading buildings from {buildings_path}...")
     with open(buildings_path) as f:
         buildings = json.load(f)
 
-    print(f"Opening DTM for ground elevation...")
-    dtm_src = rasterio.open(dtm_path)
+    # Open DTM if available, otherwise use flat ground (elevation 0)
+    dtm_src = None
+    if dtm_path is not None and dtm_path.exists():
+        print(f"Opening DTM for ground elevation...")
+        dtm_src = rasterio.open(dtm_path)
+    else:
+        print(f"No DTM available, using flat ground (elevation 0)")
 
-    # Check for custom meshes
-    custom_mesh_ids = get_custom_mesh_osm_ids()
-    if custom_mesh_ids:
-        print(f"  Found {len(custom_mesh_ids)} buildings with custom meshes")
+    # Check for custom meshes (only for default Blyth twin, not dynamic twins)
+    custom_mesh_ids = set()
+    if twin_id is None:
+        custom_mesh_ids = get_custom_mesh_osm_ids()
+        if custom_mesh_ids:
+            print(f"  Found {len(custom_mesh_ids)} buildings with custom meshes")
+    else:
+        print(f"  Skipping custom mesh loading (dynamic twin)")
 
     print(f"Processing {len(buildings['features'])} buildings...")
 
@@ -598,7 +812,7 @@ def generate_building_meshes(buildings_path: Path, dtm_path: Path,
 
         # Fall back to procedural generation if no custom mesh
         if mesh is None:
-            ground_z = get_ground_elevation(center_x, center_y, dtm_src)
+            ground_z = get_ground_elevation(center_x, center_y, dtm_src) if dtm_src else 0.0
             mesh = extrude_building_with_uvs(geom, height, ground_z, origin, properties=props)
 
         if mesh is not None and len(mesh.vertices) > 0:
@@ -612,7 +826,8 @@ def generate_building_meshes(buildings_path: Path, dtm_path: Path,
         if (i + 1) % 2000 == 0:
             print(f"  Processed {i + 1}/{len(buildings['features'])} buildings")
 
-    dtm_src.close()
+    if dtm_src:
+        dtm_src.close()
     print(f"  Success: {success}, Failed: {failed}, Custom meshes: {custom_loaded}")
     return meshes_by_chunk
 
@@ -731,8 +946,13 @@ def generate_road_meshes(roads_path: Path, dtm_path: Path, origin: tuple[float, 
     with open(roads_path) as f:
         roads = json.load(f)
 
-    print(f"Opening DTM for ground elevation...")
-    dtm_src = rasterio.open(dtm_path)
+    # Open DTM if available
+    dtm_src = None
+    if dtm_path is not None and dtm_path.exists():
+        print(f"Opening DTM for ground elevation...")
+        dtm_src = rasterio.open(dtm_path)
+    else:
+        print(f"No DTM available, using flat ground")
 
     print(f"Processing {len(roads['features'])} roads...")
 
@@ -765,7 +985,7 @@ def generate_road_meshes(roads_path: Path, dtm_path: Path, origin: tuple[float, 
             local_x = x - origin_x
             local_y = y - origin_y
             local_coords.append((local_x, local_y))
-            elevations.append(get_ground_elevation(x, y, dtm_src))
+            elevations.append(get_ground_elevation(x, y, dtm_src) if dtm_src else 0.0)
 
         # Get road width
         width = get_road_width(highway_type, settings)
@@ -791,7 +1011,8 @@ def generate_road_meshes(roads_path: Path, dtm_path: Path, origin: tuple[float, 
         if (i + 1) % 1000 == 0:
             print(f"  Processed {i + 1}/{len(roads['features'])} roads")
 
-    dtm_src.close()
+    if dtm_src:
+        dtm_src.close()
     print(f"  Success: {success}, Failed: {failed}")
     return meshes_by_chunk
 
@@ -803,8 +1024,13 @@ def generate_railway_meshes(railways_path: Path, dtm_path: Path, origin: tuple[f
     with open(railways_path) as f:
         railways = json.load(f)
 
-    print(f"Opening DTM for ground elevation...")
-    dtm_src = rasterio.open(dtm_path)
+    # Open DTM if available
+    dtm_src = None
+    if dtm_path is not None and dtm_path.exists():
+        print(f"Opening DTM for ground elevation...")
+        dtm_src = rasterio.open(dtm_path)
+    else:
+        print(f"No DTM available, using flat ground")
 
     print(f"Processing {len(railways['features'])} railways...")
 
@@ -837,7 +1063,7 @@ def generate_railway_meshes(railways_path: Path, dtm_path: Path, origin: tuple[f
             local_x = x - origin_x
             local_y = y - origin_y
             local_coords.append((local_x, local_y))
-            elevations.append(get_ground_elevation(x, y, dtm_src))
+            elevations.append(get_ground_elevation(x, y, dtm_src) if dtm_src else 0.0)
 
         # Create mesh with UV coordinates
         mesh = create_ribbon_mesh(local_coords, elevations, width, z_offset, "railway")
@@ -857,7 +1083,8 @@ def generate_railway_meshes(railways_path: Path, dtm_path: Path, origin: tuple[f
         else:
             failed += 1
 
-    dtm_src.close()
+    if dtm_src:
+        dtm_src.close()
     print(f"  Success: {success}, Failed: {failed}")
     return meshes_by_chunk
 
@@ -906,8 +1133,13 @@ def generate_waterway_meshes(water_path: Path, dtm_path: Path, origin: tuple[flo
     with open(water_path) as f:
         water = json.load(f)
 
-    print(f"Opening DTM for ground elevation...")
-    dtm_src = rasterio.open(dtm_path)
+    # Open DTM if available
+    dtm_src = None
+    if dtm_path is not None and dtm_path.exists():
+        print(f"Opening DTM for ground elevation...")
+        dtm_src = rasterio.open(dtm_path)
+    else:
+        print(f"No DTM available, using flat ground")
 
     # Filter for linear waterways only
     linear_features = [f for f in water["features"] if f.get("geometry", {}).get("type") == "LineString"]
@@ -942,7 +1174,7 @@ def generate_waterway_meshes(water_path: Path, dtm_path: Path, origin: tuple[flo
             local_x = x - origin_x
             local_y = y - origin_y
             local_coords.append((local_x, local_y))
-            elevations.append(get_ground_elevation(x, y, dtm_src))
+            elevations.append(get_ground_elevation(x, y, dtm_src) if dtm_src else 0.0)
 
         # Get waterway width
         width = get_waterway_width(waterway_type, settings)
@@ -965,7 +1197,8 @@ def generate_waterway_meshes(water_path: Path, dtm_path: Path, origin: tuple[flo
         else:
             failed += 1
 
-    dtm_src.close()
+    if dtm_src:
+        dtm_src.close()
     print(f"  Linear waterways - Success: {success}, Failed: {failed}")
     return meshes_by_chunk
 
@@ -979,8 +1212,13 @@ def generate_water_meshes(water_path: Path, dtm_path: Path, origin: tuple[float,
     with open(water_path) as f:
         water = json.load(f)
 
-    print(f"Opening DTM for ground elevation...")
-    dtm_src = rasterio.open(dtm_path)
+    # Open DTM if available
+    dtm_src = None
+    if dtm_path is not None and dtm_path.exists():
+        print(f"Opening DTM for ground elevation...")
+        dtm_src = rasterio.open(dtm_path)
+    else:
+        print(f"No DTM available, using flat ground")
 
     # Create AOI clip box in local coordinates
     min_x, min_y, max_x, max_y = aoi_bounds
@@ -1058,7 +1296,7 @@ def generate_water_meshes(water_path: Path, dtm_path: Path, origin: tuple[float,
             # Get ground elevation at polygon centroid
             cx = sum(c[0] for c in bng_coords) / len(bng_coords)
             cy = sum(c[1] for c in bng_coords) / len(bng_coords)
-            ground_z = get_ground_elevation(cx, cy, dtm_src)
+            ground_z = get_ground_elevation(cx, cy, dtm_src) if dtm_src else 0.0
             water_z = ground_z + z_offset
 
             # Create mesh at terrain-relative height
@@ -1081,7 +1319,8 @@ def generate_water_meshes(water_path: Path, dtm_path: Path, origin: tuple[float,
             else:
                 failed += 1
 
-    dtm_src.close()
+    if dtm_src:
+        dtm_src.close()
     print(f"  Polygon water bodies - Success: {success}, Failed: {failed}, Clipped: {clipped}")
     return meshes_by_chunk
 
@@ -1287,8 +1526,12 @@ def save_building_meshes_with_metadata(meshes_by_chunk: dict, output_dir: Path, 
     return stats
 
 
-def main():
+def main(twin_id: str = None):
     """Generate meshes."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     settings = load_settings()
     chunk_size = settings["terrain"]["chunk_size_m"]
 
@@ -1296,21 +1539,23 @@ def main():
     origin = load_aoi_centre()
     print(f"Origin (BNG): {origin}")
 
-    # Input paths
-    dtm_path = INTERIM_DIR / "dtm_clip.tif"
-    buildings_path = PROCESSED_DIR / "buildings_height.geojson"
-    roads_path = DATA_DIR / "raw" / "osm" / "roads.geojson"
-    railways_path = DATA_DIR / "raw" / "osm" / "railways.geojson"
-    water_path = DATA_DIR / "raw" / "osm" / "water.geojson"
-    coast_path = DATA_DIR / "raw" / "osm" / "coast.geojson"
+    # Input paths - elevation sources in order of preference
+    dtm_path = _interim_dir / "dtm_clip.tif"  # Legacy: processed LiDAR tiles
+    elevation_path = _data_dir / "raw" / "elevation" / "dem.tif"  # EA LIDAR Composite or SRTM
+    srtm_path = _data_dir / "raw" / "srtm" / "dem.tif"  # Legacy: SRTM fallback
+    buildings_path = _processed_dir / "buildings_height.geojson"
+    roads_path = _data_dir / "raw" / "osm" / "roads.geojson"
+    railways_path = _data_dir / "raw" / "osm" / "railways.geojson"
+    water_path = _data_dir / "raw" / "osm" / "water.geojson"
+    coast_path = _data_dir / "raw" / "osm" / "coast.geojson"
 
     # Output directories
-    terrain_dir = PROCESSED_DIR / "terrain"
-    buildings_dir = PROCESSED_DIR / "buildings"
-    roads_dir = PROCESSED_DIR / "roads"
-    railways_dir = PROCESSED_DIR / "railways"
-    water_dir = PROCESSED_DIR / "water"
-    sea_dir = PROCESSED_DIR / "sea"
+    terrain_dir = _processed_dir / "terrain"
+    buildings_dir = _processed_dir / "buildings"
+    roads_dir = _processed_dir / "roads"
+    railways_dir = _processed_dir / "railways"
+    water_dir = _processed_dir / "water"
+    sea_dir = _processed_dir / "sea"
 
     total_stats = {"terrain": {}, "buildings": {}, "roads": {}, "railways": {}, "water": {}, "sea": {}}
 
@@ -1318,61 +1563,82 @@ def main():
     aoi_side = settings["aoi"]["side_length_m"]
     aoi_bounds = (-aoi_side / 2, -aoi_side / 2, aoi_side / 2, aoi_side / 2)
 
+    # Determine which DEM to use: processed LiDAR > EA Composite/SRTM > legacy SRTM > flat
+    dem_path = None
+    if dtm_path is not None and dtm_path.exists():
+        dem_path = dtm_path
+        dem_source = "LiDAR (processed)"
+    elif elevation_path.exists():
+        dem_path = elevation_path
+        dem_source = "EA LIDAR Composite"
+    elif srtm_path.exists():
+        dem_path = srtm_path
+        dem_source = "SRTM"
+    else:
+        dem_source = "flat"
+
+    print(f"Elevation source: {dem_source}")
+
     # Generate terrain meshes
-    if dtm_path.exists():
+    if dem_path is not None:
         print("\n" + "="*50)
-        print("TERRAIN MESHES")
+        print(f"TERRAIN MESHES ({dem_source})")
         print("="*50)
-        terrain_chunks = generate_terrain_mesh(dtm_path, chunk_size, origin, simplify=4)
+        terrain_chunks = generate_terrain_mesh(dem_path, chunk_size, origin, simplify=4)
         stats = save_meshes(terrain_chunks, terrain_dir, "terrain")
         total_stats["terrain"] = stats
     else:
-        print(f"DTM not found: {dtm_path}")
+        print("\n" + "="*50)
+        print("FLAT TERRAIN (no elevation data)")
+        print("="*50)
+        terrain_chunks = generate_flat_terrain(aoi_bounds, chunk_size)
+        stats = save_meshes(terrain_chunks, terrain_dir, "terrain")
+        total_stats["terrain"] = stats
 
     # Generate building meshes
     if buildings_path.exists():
         print("\n" + "="*50)
         print("BUILDING MESHES")
         print("="*50)
-        building_chunks = generate_building_meshes(buildings_path, dtm_path, origin, chunk_size)
-        buildings_metadata_path = PROCESSED_DIR / "buildings_metadata.json"
+        building_chunks = generate_building_meshes(buildings_path, dem_path, origin, chunk_size, twin_id)
+        buildings_metadata_path = _processed_dir / "buildings_metadata.json"
         stats = save_building_meshes_with_metadata(building_chunks, buildings_dir, buildings_metadata_path)
         total_stats["buildings"] = stats
     else:
         print(f"Buildings not found: {buildings_path}")
 
     # Generate road meshes
-    if roads_path.exists() and dtm_path.exists():
+    if roads_path.exists():
         print("\n" + "="*50)
         print("ROAD MESHES")
         print("="*50)
-        road_chunks = generate_road_meshes(roads_path, dtm_path, origin, chunk_size, settings)
+        road_chunks = generate_road_meshes(roads_path, dem_path, origin, chunk_size, settings)
         stats = save_meshes(road_chunks, roads_dir, "roads")
         total_stats["roads"] = stats
     else:
-        print(f"Roads or DTM not found")
+        print(f"Roads not found: {roads_path}")
 
     # Generate railway meshes
-    if railways_path.exists() and dtm_path.exists():
+    if railways_path.exists():
         print("\n" + "="*50)
         print("RAILWAY MESHES")
         print("="*50)
-        railway_chunks = generate_railway_meshes(railways_path, dtm_path, origin, chunk_size, settings)
+        railway_chunks = generate_railway_meshes(railways_path, dem_path, origin, chunk_size, settings)
         stats = save_meshes(railway_chunks, railways_dir, "railways")
         total_stats["railways"] = stats
     else:
         print(f"Railways not found: {railways_path}")
 
     # Generate water meshes (both polygon bodies and linear waterways)
-    if water_path.exists() and dtm_path.exists():
+    if water_path.exists():
         print("\n" + "="*50)
         print("WATER MESHES")
         print("="*50)
         # Generate polygon water bodies (ponds, lakes, reservoirs)
-        water_chunks = generate_water_meshes(water_path, dtm_path, origin, chunk_size, aoi_bounds, settings)
+        water_chunks = generate_water_meshes(water_path, dem_path, origin, chunk_size, aoi_bounds, settings)
 
         # Generate linear waterways (streams, rivers)
-        waterway_chunks = generate_waterway_meshes(water_path, dtm_path, origin, chunk_size, settings)
+        waterway_chunks = generate_waterway_meshes(water_path, dem_path, origin, chunk_size, settings)
 
         # Merge waterway meshes into water chunks
         for chunk_key, meshes in waterway_chunks.items():
@@ -1386,7 +1652,7 @@ def main():
         stats = save_meshes(water_chunks, water_dir, "water")
         total_stats["water"] = stats
     else:
-        print(f"Water or DTM not found")
+        print(f"Water not found: {water_path}")
 
     # Generate sea mesh
     if coast_path.exists():
@@ -1414,4 +1680,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Generate 3D meshes")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

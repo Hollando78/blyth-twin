@@ -9,12 +9,18 @@ Run with:
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .db import init_db, close_db
-from .routers import buildings, meshes, export
+from .routers import buildings, meshes, export, twins
+
+# Project paths
+PROJECT_ROOT = Path(__file__).parent.parent
+DIST_TWINS_DIR = PROJECT_ROOT / "dist" / "twins"
 
 
 @asynccontextmanager
@@ -47,6 +53,11 @@ app.add_middleware(
 app.include_router(buildings.router, prefix="/api/buildings", tags=["buildings"])
 app.include_router(meshes.router, prefix="/api/buildings", tags=["meshes"])
 app.include_router(export.router, prefix="/api/export", tags=["export"])
+app.include_router(twins.router, prefix="/api/twins", tags=["twins"])
+
+# Serve twin assets as static files
+if DIST_TWINS_DIR.exists():
+    app.mount("/twins", StaticFiles(directory=str(DIST_TWINS_DIR)), name="twins")
 
 
 @app.get("/api/meshes", tags=["meshes"])
@@ -71,7 +82,8 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "buildings": "/api/buildings",
-            "export": "/api/export"
+            "export": "/api/export",
+            "twins": "/api/twins"
         }
     }
 

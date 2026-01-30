@@ -14,9 +14,12 @@ Output:
 
 Usage:
     python 65_generate_footprints.py
+    python 65_generate_footprints.py --twin-id <uuid>
 """
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -33,8 +36,26 @@ DATA_DIR = SCRIPT_DIR.parent.parent / "data"
 INTERIM_DIR = DATA_DIR / "interim"
 PROCESSED_DIR = DATA_DIR / "processed"
 
+# Module-level paths
+_config_dir = CONFIG_DIR
+_interim_dir = INTERIM_DIR
+_processed_dir = PROCESSED_DIR
+
 # Coordinate transformer
 WGS84_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
+
+
+def get_twin_paths(twin_id: str):
+    """Get paths for twin-specific execution."""
+    global _config_dir, _interim_dir, _processed_dir
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
+    from lib.twin_config import get_twin_config
+    config = get_twin_config(twin_id)
+    _config_dir = config.config_dir
+    _interim_dir = config.interim_dir
+    _processed_dir = config.processed_dir
+    config.ensure_directories()
+    return config
 
 # Properties to extract from OSM data
 METADATA_PROPERTIES = [
@@ -55,13 +76,13 @@ METADATA_PROPERTIES = [
 
 def load_settings() -> dict:
     """Load settings from YAML configuration."""
-    with open(CONFIG_DIR / "settings.yaml") as f:
+    with open(_config_dir / "settings.yaml") as f:
         return yaml.safe_load(f)
 
 
 def load_aoi_centre() -> tuple[float, float]:
     """Load AOI centre for local origin."""
-    with open(CONFIG_DIR / "aoi.geojson") as f:
+    with open(_config_dir / "aoi.geojson") as f:
         aoi = json.load(f)
     centre = aoi["features"][0]["properties"]["centre_bng"]
     return tuple(centre)
@@ -159,8 +180,13 @@ def generate_footprints(buildings_path: Path, dtm_path: Path,
     with open(buildings_path) as f:
         buildings = json.load(f)
 
-    print(f"Opening DTM for ground elevation...")
-    dtm_src = rasterio.open(dtm_path)
+    # Open DTM if available, otherwise use flat ground
+    dtm_src = None
+    if dtm_path is not None and dtm_path.exists():
+        print(f"Opening DTM for ground elevation...")
+        dtm_src = rasterio.open(dtm_path)
+    else:
+        print(f"No DTM available, using flat ground (elevation 0)")
 
     print(f"Processing {len(buildings['features'])} buildings...")
 
@@ -187,7 +213,7 @@ def generate_footprints(buildings_path: Path, dtm_path: Path,
         center_x, center_y = WGS84_TO_BNG.transform(center_lon, center_lat)
 
         # Get ground elevation
-        ground_z = get_ground_elevation(center_x, center_y, dtm_src)
+        ground_z = get_ground_elevation(center_x, center_y, dtm_src) if dtm_src else 0.0
 
         # Create footprint mesh
         osm_id = props.get('osm_id') if props else None
@@ -217,7 +243,8 @@ def generate_footprints(buildings_path: Path, dtm_path: Path,
         if (building_id + 1) % 2000 == 0:
             print(f"  Processed {building_id + 1}/{len(buildings['features'])} buildings")
 
-    dtm_src.close()
+    if dtm_src:
+        dtm_src.close()
 
     # Build face maps for each chunk
     print("Building face maps...")
@@ -273,8 +300,12 @@ def save_footprint_meshes(meshes_by_chunk: dict, output_dir: Path) -> dict:
     return stats
 
 
-def main():
+def main(twin_id: str = None):
     """Generate footprint meshes and metadata."""
+    if twin_id:
+        print(f"Twin mode: {twin_id}")
+        get_twin_paths(twin_id)
+
     settings = load_settings()
     chunk_size = settings["terrain"]["chunk_size_m"]
 
@@ -283,20 +314,21 @@ def main():
     print(f"Origin (BNG): {origin}")
 
     # Input paths
-    dtm_path = INTERIM_DIR / "dtm_clip.tif"
-    buildings_path = PROCESSED_DIR / "buildings_height.geojson"
+    dtm_path = _interim_dir / "dtm_clip.tif"
+    buildings_path = _processed_dir / "buildings_height.geojson"
 
     # Output paths
-    footprints_dir = PROCESSED_DIR / "footprints"
-    metadata_path = PROCESSED_DIR / "footprints_metadata.json"
+    footprints_dir = _processed_dir / "footprints"
+    metadata_path = _processed_dir / "footprints_metadata.json"
 
     if not buildings_path.exists():
         print(f"Buildings not found: {buildings_path}")
         return
 
+    # DTM is optional for footprints - use 0 elevation if not available
     if not dtm_path.exists():
-        print(f"DTM not found: {dtm_path}")
-        return
+        print(f"DTM not found, using ground level 0: {dtm_path}")
+        dtm_path = None
 
     print("\n" + "="*50)
     print("FOOTPRINT MESHES")
@@ -329,4 +361,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Generate footprint meshes")
+    parser.add_argument("--twin-id", help="Twin UUID for twin-specific execution")
+    args = parser.parse_args()
+    main(args.twin_id)

@@ -12,6 +12,15 @@ from .mesh import (
     MeshResponse,
     MeshUploadResponse
 )
+from .twin import (
+    TwinCreate,
+    TwinProgress,
+    TwinResponse,
+    TwinListItem,
+    TwinListResponse,
+    TwinCreateResponse,
+    TwinEvent
+)
 
 __all__ = [
     "BuildingProperties",
@@ -21,5 +30,12 @@ __all__ = [
     "BuildingOverrideResponse",
     "MeshMetadata",
     "MeshResponse",
-    "MeshUploadResponse"
+    "MeshUploadResponse",
+    "TwinCreate",
+    "TwinProgress",
+    "TwinResponse",
+    "TwinListItem",
+    "TwinListResponse",
+    "TwinCreateResponse",
+    "TwinEvent"
 ]

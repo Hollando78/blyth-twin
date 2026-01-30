@@ -21,15 +21,51 @@ const ESRI_TILE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/Worl
 // Use ESRI by default
 const TILE_URL = ESRI_TILE_URL;
 
-// DTM bounds in WGS84 - MUST match the actual DTM raster bounds
-// These are derived from the DTM (EPSG:27700) converted to WGS84
-// Run: python3 -c "from pyproj import Transformer; ... " to recalculate if DTM changes
-const DTM_BOUNDS_WGS84 = {
+// DTM bounds in WGS84 - default for original Blyth twin
+// For dynamic twins, bounds are passed from manifest
+const DEFAULT_currentBounds = {
   minLat: 55.095913,
   maxLat: 55.149454,
   minLon: -1.563491,
   maxLon: -1.468763,
 };
+
+// Current bounds (updated when loading dynamic twins)
+let currentBounds = { ...DEFAULT_currentBounds };
+
+/**
+ * Calculate grid convergence angle between true north and BNG grid north.
+ * This varies by location - 0° at central meridian (2°W), positive to the east.
+ */
+function calculateGridConvergence(lat: number, lon: number): number {
+  const centralMeridian = -2.0; // BNG central meridian is 2°W
+  const deltaLon = lon - centralMeridian;
+  const convergenceRad = (deltaLon * Math.PI / 180) * Math.sin(lat * Math.PI / 180);
+  return convergenceRad * 180 / Math.PI;
+}
+
+/**
+ * Set terrain bounds from manifest AOI
+ */
+export function setTerrainBounds(centreLat: number, centreLon: number, sideLengthM: number) {
+  // Approximate degrees per meter at this latitude
+  const latPerM = 1 / 111320;
+  const lonPerM = 1 / (111320 * Math.cos(centreLat * Math.PI / 180));
+
+  const halfSide = sideLengthM / 2;
+
+  currentBounds = {
+    minLat: centreLat - halfSide * latPerM,
+    maxLat: centreLat + halfSide * latPerM,
+    minLon: centreLon - halfSide * lonPerM,
+    maxLon: centreLon + halfSide * lonPerM,
+  };
+
+  // Clear texture cache when bounds change
+  textureCache.clear();
+
+  console.log("Terrain bounds set:", currentBounds);
+}
 
 // Texture cache
 const textureCache: Map<string, THREE.Texture> = new Map();
@@ -75,8 +111,8 @@ export async function loadTerrainTexture(zoom: number = 14): Promise<THREE.Textu
   }
 
   // Use center of DTM bounds
-  const centerLat = (DTM_BOUNDS_WGS84.minLat + DTM_BOUNDS_WGS84.maxLat) / 2;
-  const centerLon = (DTM_BOUNDS_WGS84.minLon + DTM_BOUNDS_WGS84.maxLon) / 2;
+  const centerLat = (currentBounds.minLat + currentBounds.maxLat) / 2;
+  const centerLon = (currentBounds.minLon + currentBounds.maxLon) / 2;
   const url = getTileUrl(centerLat, centerLon, zoom);
   console.log(`Loading terrain tile: ${url}`);
 
@@ -122,10 +158,10 @@ export async function loadTerrainTextureGrid(zoom: number = 16): Promise<THREE.C
   }
 
   // Use exact DTM bounds - no calculation needed
-  const minLat = DTM_BOUNDS_WGS84.minLat;
-  const maxLat = DTM_BOUNDS_WGS84.maxLat;
-  const minLon = DTM_BOUNDS_WGS84.minLon;
-  const maxLon = DTM_BOUNDS_WGS84.maxLon;
+  const minLat = currentBounds.minLat;
+  const maxLat = currentBounds.maxLat;
+  const minLon = currentBounds.minLon;
+  const maxLon = currentBounds.maxLon;
 
   // Get tile coordinates for corners (integer for fetching)
   const minTile = latLonToTile(maxLat, minLon, zoom); // NW corner
@@ -293,10 +329,12 @@ export async function loadTerrainTextureGrid(zoom: number = 16): Promise<THREE.C
   ctx2.scale(-1, 1);
   ctx2.drawImage(correctedCanvas, 0, 0);
 
-  // Apply a small rotation around center to correct for remaining drift
-  // This compensates for grid convergence between Web Mercator and BNG
-  const ROTATION_DEGREES = 0.7;
-  const rotationRad = ROTATION_DEGREES * Math.PI / 180;
+  // Apply rotation to correct for grid convergence between Web Mercator and BNG
+  // This angle varies by location - 0° at central meridian (2°W)
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+  const gridConvergence = calculateGridConvergence(centerLat, centerLon);
+  const rotationRad = gridConvergence * Math.PI / 180;
 
   const rotatedCanvas = document.createElement("canvas");
   rotatedCanvas.width = croppedWidth;
@@ -309,7 +347,7 @@ export async function loadTerrainTextureGrid(zoom: number = 16): Promise<THREE.C
   ctx3.translate(-croppedWidth / 2, -croppedHeight / 2);
   ctx3.drawImage(transformedCanvas, 0, 0);
 
-  console.log(`Applied ${ROTATION_DEGREES}° rotation correction`);
+  console.log(`Applied ${gridConvergence.toFixed(2)}° grid convergence rotation`);
 
   const texture = new THREE.CanvasTexture(rotatedCanvas);
   texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -381,8 +419,8 @@ function generateProceduralTerrainTexture(): THREE.CanvasTexture {
 export async function createTerrainMaterial(): Promise<THREE.MeshBasicMaterial> {
   try {
     // Use lower zoom on mobile to reduce memory usage and load time
-    // Zoom 16 = ~2.4m/pixel, Zoom 15 = ~4.8m/pixel, Zoom 14 = ~9.6m/pixel
-    const zoom = isMobile ? 15 : 16;
+    // Zoom 18 = ~0.6m/pixel, Zoom 17 = ~1.2m/pixel, Zoom 16 = ~2.4m/pixel
+    const zoom = isMobile ? 16 : 17;
     console.log(`Loading terrain at zoom ${zoom} (mobile: ${isMobile})`);
     const texture = await loadTerrainTextureGrid(zoom);
 

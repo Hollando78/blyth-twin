@@ -817,6 +817,253 @@ html, body {
   background: linear-gradient(135deg, transparent 50%, rgba(135, 206, 235, 0.5) 50%);
 }
 
+/* Upload Preview Window */
+.upload-preview-window {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 480px;
+  background: rgba(20, 20, 35, 0.98);
+  border: 1px solid rgba(135, 206, 235, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1100;
+}
+
+.upload-preview-window.hidden {
+  display: none;
+}
+
+.upload-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background: rgba(0, 0, 0, 0.4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.upload-preview-title {
+  color: #87ceeb;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.upload-preview-close {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #999;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.upload-preview-close:hover {
+  background: rgba(244, 67, 54, 0.3);
+  color: white;
+}
+
+.upload-preview-content {
+  height: 250px;
+  position: relative;
+  overflow: hidden;
+  background: #0a0a15;
+}
+
+#upload-preview-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.upload-preview-controls {
+  padding: 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.transform-section {
+  margin-bottom: 15px;
+}
+
+.transform-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.transform-section h5 {
+  color: #87ceeb;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 10px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.transform-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.transform-row:last-child {
+  margin-bottom: 0;
+}
+
+.transform-row label {
+  color: #888;
+  font-size: 12px;
+  width: 30px;
+  flex-shrink: 0;
+}
+
+.transform-row input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  outline: none;
+}
+
+.transform-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #87ceeb;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.transform-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.transform-row input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #87ceeb;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.transform-row input[type="number"] {
+  width: 60px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 12px;
+  text-align: center;
+}
+
+.transform-row input[type="number"]:focus {
+  border-color: #87ceeb;
+  outline: none;
+}
+
+.transform-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.transform-actions .btn-secondary {
+  flex: 1;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.transform-actions .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+.transform-actions .btn-primary {
+  flex: 2;
+  padding: 10px;
+  background: #2196F3;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.transform-actions .btn-primary:hover {
+  background: #1e88e5;
+}
+
+.upload-preview-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  z-index: 10;
+}
+
+.upload-preview-loading.hidden {
+  display: none;
+}
+
+.spinner-small {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #87ceeb;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.upload-preview-loading span {
+  color: #ccc;
+  font-size: 13px;
+}
+
+.upload-preview-error {
+  background: rgba(244, 67, 54, 0.2);
+  border-top: 1px solid #F44336;
+  color: #ff8a80;
+  padding: 10px 15px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.upload-preview-error.hidden {
+  display: none;
+}
+
 /* View Mesh Button in Building Info */
 .btn-view-mesh {
   margin-top: 10px;
@@ -1309,6 +1556,35 @@ html, body {
   .preview-window:has(.mesh-editor-ui) {
     width: auto;
     height: auto;
+  }
+
+  /* Upload preview - responsive on mobile */
+  .upload-preview-window {
+    position: fixed;
+    top: 10px !important;
+    left: 10px !important;
+    right: 10px;
+    bottom: 80px;
+    width: auto !important;
+    transform: none !important;
+  }
+
+  .upload-preview-content {
+    height: 200px;
+  }
+
+  .transform-row {
+    flex-wrap: wrap;
+  }
+
+  .transform-row input[type="range"] {
+    order: 3;
+    flex-basis: 100%;
+    margin-top: 5px;
+  }
+
+  .transform-row input[type="number"] {
+    margin-left: auto;
   }
 
   /* Larger toolbar buttons for touch */
